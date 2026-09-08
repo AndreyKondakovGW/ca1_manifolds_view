@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session map</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+  <aside class="sidebar">
+    <h2>Data source</h2>
+    <p class="caption" id="data-source-caption">loading config.json…</p>
+    <button id="reload-btn">Clear cache &amp; reload</button>
+
+    <div id="sidebar-session-picker" hidden>
+      <h2>Session</h2>
+      <p class="caption">Every exported session, not just the ones plotted below
+        (<code>session_map.json</code> may not cover all of them).</p>
+      <label class="field-label" id="session-select-label" for="session-select"></label>
+      <select id="session-select"></select>
+    </div>
+
+    <div id="sidebar-map-options" hidden>
+      <h2>Map options</h2>
+      <label class="field-label" for="color-select">Color by</label>
+      <select id="color-select"></select>
+    </div>
+  </aside>
+
+  <main class="main">
+    <nav class="topnav">
+      <a href="index.html">← Manifold viewer</a>
+      <span class="topnav-current">Session map</span>
+    </nav>
+    <h1>Session map</h1>
+    <p class="caption">Each point is one session (from <code>session_map.json</code>, exported from a
+      <code>session_map_csv</code> table -- see <code>export_config.yaml</code>). Click a point to open
+      its manifold view.</p>
+    <div id="message" class="message" hidden></div>
+    <div id="plot"></div>
+    <p id="caption" class="caption"></p>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2/plotly.min.js"></script>
+<script src="vendor/hsluv.js"></script>
+<script src="common.js"></script>
+<script src="map.js"></script>
+</body>
+</html>

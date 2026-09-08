@@ -1,0 +1,45 @@
+# Settings for export_data.py -- the script that turns a manifold folder
+# into the static JSON files this GitHub Pages site reads. Edit this and
+# re-run `python export_data.py` any time the source data changes.
+
+# Folder containing <session_type>/<session>.nwb, <session_type>/<session>_avg.csv
+# and session_metadata.csv. An absolute path is
+# used as-is; a relative path is resolved against the repo root.
+manifold_folder: ""
+
+# Optional label shown in the site's "Data source" sidebar caption instead
+# of the real manifold_folder path above (which is never written to disk --
+# see export_data.py). Defaults to manifold_folder's last path component
+# (e.g. "sessions_processed") if left blank.
+data_source_label: ""
+
+# Where to write the exported JSON, relative to this file. The site's
+# index.html/app.js expect it at ./data next to them, so leave this as "data"
+# unless you also update the fetch paths in app.js.
+output_dir: "data"
+
+# Optional allowlist of sessions to export, as "<session_type>/<session>"
+# strings (e.g. "same_reward_cue/srb504_250129"). Leave empty to export
+# every session listed in session_metadata.csv -- useful to shrink a big
+# manifold_folder down to a handful of sessions for a lightweight demo site.
+sessions: []
+
+# Decimal places to round exported floats to (UMAP coordinates, position,
+# speed, time, and the per-session geodesic distance matrix -- by far the
+# biggest contributor to file size, an N x N table for N averaged-manifold
+# points). Keeps the JSON files small without visibly affecting the plots.
+# Set to null to disable rounding.
+round_decimals: 4
+
+# Optional: path to a 2D "session map" CSV -- session name as the index/
+# first column, then UMAP1, UMAP2, plus any number of extra columns used as
+# selectable color features. Powers the
+# separate sessions_map.html page: a 2D scatter of every session, colored by
+# whichever of those extra columns you pick, where clicking a point jumps to
+# that session's manifold view (only for sessions this run also exported
+# from manifold_folder above -- a point for any other session still shows,
+# just isn't clickable). An absolute path is used as-is; a relative path is
+# resolved against the repo root. Leave blank to skip -- sessions_map.html
+# will show a "not available" message, and the session dropdown it also
+# has keeps working regardless.
+session_map_csv: 

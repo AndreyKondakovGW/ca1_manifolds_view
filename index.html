@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CA1 manifold viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+  <aside class="sidebar">
+    <h2>Data source</h2>
+    <p class="caption" id="data-source-caption">loading config.json…</p>
+    <button id="reload-btn">Clear cache &amp; reload</button>
+
+    <div id="sidebar-session-section" hidden>
+      <h2>Session</h2>
+      <div id="filters"></div>
+      <label class="field-label" id="session-select-label" for="session-select"></label>
+      <select id="session-select"></select>
+    </div>
+
+    <div id="sidebar-view-section" hidden>
+      <h2>View</h2>
+      <fieldset id="view-mode-fieldset" class="radio-group">
+        <label><input type="radio" name="view-mode" value="full" checked> Full manifold</label>
+        <label><input type="radio" name="view-mode" value="avg"> Averaged manifold</label>
+        <label><input type="radio" name="view-mode" value="geo"> Geodesic matrix</label>
+      </fieldset>
+    </div>
+
+    <div id="sidebar-full-options" hidden>
+      <h2>Full manifold options</h2>
+      <label class="field-label" for="color-select">Color by</label>
+      <select id="color-select">
+        <option value="position">position</option>
+        <option value="speed">speed</option>
+        <option value="time">time</option>
+      </select>
+
+      <label class="field-label">maze_group (include)</label>
+      <div id="maze-group-checks" class="checkbox-group"></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <nav class="topnav">
+      <span class="topnav-current">Manifold viewer</span>
+      <a href="sessions_map.html">Session map →</a>
+    </nav>
+    <h1>CA1 manifold viewer</h1>
+    <h3 id="session-subheader"></h3>
+    <div id="message" class="message" hidden></div>
+    <div id="plot"></div>
+    <p id="caption" class="caption"></p>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2/plotly.min.js"></script>
+<script src="common.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

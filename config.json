@@ -1,0 +1,10 @@
+{
+  "_comment": "Client-side settings for index.html/app.js -- plot appearance and default color feature. Edit and refresh the page, no rebuild needed.",
+  "plot": {
+    "point_size": 2,
+    "avg_plot_point_size": 4,
+    "width": 900,
+    "height": 700
+  },
+  "default_color_feature": "position"
+}
