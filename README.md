@@ -1,4 +1,4 @@
-# CA1 manifold viewer (GitHub Pages)
+# CA1 manifold viewer (GitHub Pages) Claude made
 
 A static, GitHub-Pages-friendly viewer for CA1 manifold data -- pick a
 session, view its full or averaged manifold, color/filter it, or browse a
