@@ -11,15 +11,25 @@
  * `session_type` and is still shown, just not clickable -- clicking it shows
  * a message instead of navigating.
  *
+ * Any column beyond the reserved ones (e.g. `session_cluster`, `session_type`,
+ * `behavior_score`) is picked up automatically as a selectable color feature.
+ * `behavior_score` uses a sentinel of -1 for sessions with no known behavior
+ * score -- since that would otherwise distort the continuous colorscale, a
+ * checkbox (shown only while `behavior_score` is the active color feature)
+ * lets those sessions be filtered out of the plot.
+ *
  * el/showMessage/clearMessage/huslPalette/dropNaUnique/firstSeenOrder come
  * from common.js; huslPalette in turn needs vendor/hsluv.js loaded first.
  */
 
-const RESERVED_COLUMNS = new Set(["session", "UMAP1", "UMAP2", "session_type"]);
+const RESERVED_COLUMNS = new Set(["session", "UMAP1", "UMAP2"]);
+const BEHAVIOR_SCORE_COLUMN = "behavior_score";
+const UNKNOWN_BEHAVIOR_SCORE = -1;
 
 const STATE = {
   rows: [],
   colorFeature: null,
+  hideUnknownBehaviorScore: true,
 };
 
 async function init() {
@@ -130,11 +140,21 @@ async function loadSessionMap() {
     render();
   };
 
+  el("hide-unknown-behavior-score").addEventListener("change", (e) => {
+    STATE.hideUnknownBehaviorScore = e.target.checked;
+    render();
+  });
+
   render();
 }
 
 function render() {
-  const rows = STATE.rows;
+  const isBehaviorScore = STATE.colorFeature === BEHAVIOR_SCORE_COLUMN;
+  el("behavior-score-options").hidden = !isBehaviorScore;
+
+  const rows = (isBehaviorScore && STATE.hideUnknownBehaviorScore)
+    ? STATE.rows.filter((r) => r[BEHAVIOR_SCORE_COLUMN] !== UNKNOWN_BEHAVIOR_SCORE)
+    : STATE.rows;
   const colorValues = STATE.colorFeature ? rows.map((r) => r[STATE.colorFeature]) : rows.map(() => 0);
   const uniqueVals = dropNaUnique(colorValues);
   const categorical = uniqueVals.length < 20;
