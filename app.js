@@ -237,7 +237,7 @@ function renderGeodesic(session) {
     x: idx,
     y: idx,
     type: "heatmap",
-    colorscale: [[0, "blue"], [0.5, "white"], [1, "red"]],
+    colorscale: [[0, "#08519c"], [0.5, "white"], [1, "#d94801"]],
     colorbar: { title: "distance" },
     ...(customdata ? {
       customdata,
