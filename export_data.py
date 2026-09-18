@@ -39,7 +39,9 @@ and writes:
           "geodesic_matrix": [[...], ...]  (NxN, N = len(avg's rows) -- pairwise
                  geodesic distance between the averaged-manifold points, from
                  src/manifold_dist.py's geodesic_distance_matrix run on the
-                 same UMAP_1/2/3 coordinates as "avg") or null if "avg" is null
+                 same UMAP_1/2/3 coordinates as "avg", normalized by that
+                 session's N2N/F2F average radius computed from "position_bin")
+                 or null if "avg" is null or has no "position_bin" column
         }
 
 If export_config.yaml's `session_map_csv` is set, also writes:
@@ -163,12 +165,14 @@ def load_avg(avg_path, decimals):
 def compute_geodesic_matrix(avg_df, decimals):
     """Pairwise geodesic distance between an averaged manifold's own points
     (src/manifold_dist.py's geodesic_distance_matrix on the same UMAP_1/2/3
-    coordinates plotted by the "Averaged manifold" view), as a plain nested
-    list ready for JSON. None if there's nothing to compute it from."""
-    if avg_df is None or len(avg_df) < 2:
+    coordinates plotted by the "Averaged manifold" view, normalized by that
+    session's N2N/F2F average radius using "position_bin"), as a plain
+    nested list ready for JSON. None if there's nothing to compute it from."""
+    if avg_df is None or len(avg_df) < 2 or "position_bin" not in avg_df.columns:
         return None
     X = avg_df[["UMAP_1", "UMAP_2", "UMAP_3"]].fillna(0).to_numpy(dtype=float)
-    matrix = geodesic_distance_matrix(X)
+    pos = avg_df["position_bin"].to_numpy(dtype=float)
+    matrix = geodesic_distance_matrix(X, pos)
     if decimals is not None:
         matrix = np.round(matrix, decimals)
     # inf can show up if a point never gets connected into the kNN graph;

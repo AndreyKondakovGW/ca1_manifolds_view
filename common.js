@@ -6,7 +6,7 @@
 
 // px.colors.qualitative.Plotly, same order as the Python palette.
 const PALETTE = [
-  "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
+  "#08519c", "#fdae6b", "#9ecae1", "#d94801", "#FFA15A",
   "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52",
 ];
 
