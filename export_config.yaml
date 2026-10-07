@@ -5,7 +5,7 @@
 # Folder containing <session_type>/<session>.nwb, <session_type>/<session>_avg.csv
 # and session_metadata.csv. An absolute path is
 # used as-is; a relative path is resolved against the repo root.
-manifold_folder: ""
+manifold_folder: "E:\\Andrei Kondakov 06.18\\CA1\\sessions_processed"
 
 # Optional label shown in the site's "Data source" sidebar caption instead
 # of the real manifold_folder path above (which is never written to disk --
