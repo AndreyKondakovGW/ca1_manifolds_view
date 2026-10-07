@@ -91,7 +91,10 @@ averaged-manifold CSV show a message instead of a plot.
   dropdown -- every exported session, independent of what's plotted -- and
   a point for a session that wasn't part of the last `export_data.py` run
   (e.g. outside the `sessions:` allowlist) still shows on the map, just
-  isn't clickable.
+  isn't clickable. Sessions listed in `bad_sessions.json`
+  (`{"bad_sessions": [...]}`, next to `sessions_map.html`) are left off the
+  map but stay available in the dropdown and in `index.html` -- the file is
+  read at page load, so edits only need a refresh, no re-export.
 
 ## Notes
 

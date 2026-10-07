@@ -22,6 +22,12 @@
  * (`_exported` false -- no manifold JSON behind it) is still shown, just not
  * clickable -- clicking it shows a message instead of navigating.
  *
+ * Sessions listed in bad_sessions.json ({"bad_sessions": [<session name>,
+ * ...]}, next to this file) are left off the map -- read at page load, so
+ * editing it only needs a refresh, no re-export. They stay available in the
+ * Session dropdown and in index.html's manifold view. A missing/invalid
+ * bad_sessions.json just means nothing is excluded.
+ *
  * `behavior_score`, if present, uses a sentinel of -1 for sessions with no
  * known score -- since that would otherwise distort the colorscale, a
  * checkbox (shown only while `behavior_score` is the active color feature)
@@ -39,6 +45,19 @@ const CATEGORICAL_MAX_UNIQUE = 20;
 const MISSING_COLOR = "#b0b0b0";
 const BEHAVIOR_SCORE_COLUMN = "behavior_score";
 const UNKNOWN_BEHAVIOR_SCORE = -1;
+
+const BAD_SESSIONS_PATH = "bad_sessions.json";
+
+async function loadBadSessions() {
+  try {
+    const resp = await fetch(BAD_SESSIONS_PATH);
+    if (!resp.ok) return new Set();
+    const data = await resp.json();
+    return new Set((data.bad_sessions || []).map(String));
+  } catch (_) {
+    return new Set(); // optional file
+  }
+}
 
 const isMissing = (v) => v === null || v === undefined || (typeof v === "number" && Number.isNaN(v));
 
@@ -133,8 +152,16 @@ async function loadSessionMap() {
     );
     return;
   }
+  const badSessions = await loadBadSessions();
+  const nBefore = rows.length;
+  rows = rows.filter((r) => !badSessions.has(String(r.session)));
+  STATE.nExcluded = nBefore - rows.length;
+
   if (rows.length === 0) {
-    showMessage("data/session_map.json is empty.", "warning");
+    showMessage(
+      nBefore === 0 ? "data/session_map.json is empty." : `All ${nBefore} session(s) on the map are listed in ${BAD_SESSIONS_PATH}.`,
+      "warning"
+    );
     return;
   }
 
@@ -256,7 +283,8 @@ function render() {
 
   const nClickable = rows.filter((r) => r._exported).length;
   const mode = categorical ? "distinct colors" : "colormap";
-  el("caption").textContent = `${rows.length} session(s), ${nClickable} with manifold data available -- colored by ${feature} (${mode}). Click a point to open its manifold view.`;
+  const excludedNote = STATE.nExcluded ? ` (${STATE.nExcluded} excluded via bad_sessions.json)` : "";
+  el("caption").textContent = `${rows.length} session(s)${excludedNote}, ${nClickable} with manifold data available -- colored by ${feature} (${mode}). Click a point to open its manifold view.`;
 }
 
 init();
