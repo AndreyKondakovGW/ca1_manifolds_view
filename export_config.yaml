@@ -5,7 +5,7 @@
 # Folder containing <session_type>/<session>.nwb, <session_type>/<session>_avg.csv
 # and session_metadata.csv. An absolute path is
 # used as-is; a relative path is resolved against the repo root.
-manifold_folder: 
+manifold_folder: ""
 
 # Optional label shown in the site's "Data source" sidebar caption instead
 # of the real manifold_folder path above (which is never written to disk --
@@ -31,15 +31,8 @@ sessions: []
 # Set to null to disable rounding.
 round_decimals: 4
 
-# Optional: path to a 2D "session map" CSV -- session name as the index/
-# first column, then UMAP1, UMAP2, plus any number of extra columns used as
-# selectable color features. Powers the
-# separate sessions_map.html page: a 2D scatter of every session, colored by
-# whichever of those extra columns you pick, where clicking a point jumps to
-# that session's manifold view (only for sessions this run also exported
-# from manifold_folder above -- a point for any other session still shows,
-# just isn't clickable). An absolute path is used as-is; a relative path is
-# resolved against the repo root. Leave blank to skip -- sessions_map.html
-# will show a "not available" message, and the session dropdown it also
-# has keeps working regardless.
-session_map_csv:
+# The 2D session map (sessions_map.html / data/session_map.json) is built
+# from session_metadata.csv's map_cord1/map_cord2 columns -- written by the
+# pipeline's experiments/src/exp_session_manifold_clustering.py. No setting
+# needed; run `python export_data.py --session-map-only` to refresh just the
+# map after re-running that script.

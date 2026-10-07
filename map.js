@@ -1,30 +1,46 @@
 /*
- * 2D "session map" page -- plots data/session_map.json (exported by
- * export_data.py from a `session_map_csv` table: session name as the
- * index/first column, then UMAP1, UMAP2, plus any number of extra columns
- * used as selectable color features, e.g. a cluster label). Clicking a
- * point jumps to index.html with that session pre-selected
+ * 2D "session map" page -- plots data/session_map.json, which export_data.py
+ * builds from session_metadata.csv: one record per session that has
+ * map_cord1/map_cord2 (a 2D UMAP embedding of the session-by-session manifold
+ * distance matrix, written by the pipeline's
+ * experiments/src/exp_session_manifold_clustering.py). Clicking a point jumps
+ * to index.html with that session pre-selected
  * (index.html?session_type=<type>&session=<name>), read there by app.js.
  *
- * A point whose session wasn't part of the last export_data.py run (not in
- * session_metadata.json, so there's no manifold data behind it) has no
- * `session_type` and is still shown, just not clickable -- clicking it shows
- * a message instead of navigating.
+ * Every session_metadata.csv column except `session`, `map_cord1` and
+ * `map_cord2` (and the exporter's own `_`-prefixed bookkeeping fields) is a
+ * selectable color feature. How a feature is colored:
+ *   - non-numeric (strings, booleans, e.g. session_type, manifold_cluster):
+ *     always distinct colors, one legend entry per value;
+ *   - numeric with fewer than CATEGORICAL_MAX_UNIQUE distinct values (e.g.
+ *     n_groups_after_averaging): distinct colors too;
+ *   - numeric with more: a continuous colormap with a colorbar.
+ * Sessions with a missing value for the active feature are drawn in grey as
+ * their own "missing" legend entry instead of being dropped.
  *
- * Any column beyond the reserved ones (e.g. `session_cluster`, `session_type`,
- * `behavior_score`) is picked up automatically as a selectable color feature.
- * `behavior_score` uses a sentinel of -1 for sessions with no known behavior
- * score -- since that would otherwise distort the continuous colorscale, a
+ * A point whose session wasn't part of the last export_data.py run
+ * (`_exported` false -- no manifold JSON behind it) is still shown, just not
+ * clickable -- clicking it shows a message instead of navigating.
+ *
+ * `behavior_score`, if present, uses a sentinel of -1 for sessions with no
+ * known score -- since that would otherwise distort the colorscale, a
  * checkbox (shown only while `behavior_score` is the active color feature)
  * lets those sessions be filtered out of the plot.
  *
- * el/showMessage/clearMessage/huslPalette/dropNaUnique/firstSeenOrder come
- * from common.js; huslPalette in turn needs vendor/hsluv.js loaded first.
+ * el/showMessage/clearMessage/huslPalette/dropNaUnique come from common.js;
+ * huslPalette in turn needs vendor/hsluv.js loaded first.
  */
 
-const RESERVED_COLUMNS = new Set(["session", "UMAP1", "UMAP2"]);
+const X_COLUMN = "map_cord1";
+const Y_COLUMN = "map_cord2";
+const RESERVED_COLUMNS = new Set(["session", X_COLUMN, Y_COLUMN]);
+const DEFAULT_COLOR_FEATURE = "manifold_cluster";
+const CATEGORICAL_MAX_UNIQUE = 20;
+const MISSING_COLOR = "#b0b0b0";
 const BEHAVIOR_SCORE_COLUMN = "behavior_score";
 const UNKNOWN_BEHAVIOR_SCORE = -1;
+
+const isMissing = (v) => v === null || v === undefined || (typeof v === "number" && Number.isNaN(v));
 
 const STATE = {
   rows: [],
@@ -100,7 +116,7 @@ async function loadSessionMap() {
   }
   if (!resp.ok) {
     showMessage(
-      "No data/session_map.json found. Set session_map_csv in export_config.yaml and re-run export_data.py to generate it.",
+      "No data/session_map.json found. Run the pipeline's experiments/src/exp_session_manifold_clustering.py (adds map_cord1/map_cord2 to session_metadata.csv), then re-run export_data.py (or export_data.py --session-map-only).",
       "error"
     );
     return;
@@ -125,7 +141,9 @@ async function loadSessionMap() {
   STATE.rows = rows;
   el("sidebar-map-options").hidden = false;
 
-  const featureCols = Object.keys(rows[0]).filter((k) => !RESERVED_COLUMNS.has(k));
+  // union over all rows -- a column can be null/absent on some records
+  const featureCols = [...new Set(rows.flatMap((r) => Object.keys(r)))]
+    .filter((k) => !RESERVED_COLUMNS.has(k) && !k.startsWith("_"));
   const select = el("color-select");
   select.innerHTML = "";
   for (const col of featureCols) {
@@ -134,7 +152,8 @@ async function loadSessionMap() {
     opt.textContent = col;
     select.appendChild(opt);
   }
-  STATE.colorFeature = featureCols[0] || null;
+  STATE.colorFeature = featureCols.includes(DEFAULT_COLOR_FEATURE) ? DEFAULT_COLOR_FEATURE : (featureCols[0] || null);
+  select.value = STATE.colorFeature || "";
   select.onchange = () => {
     STATE.colorFeature = select.value;
     render();
@@ -148,76 +167,83 @@ async function loadSessionMap() {
   render();
 }
 
+// Distinct-color order: numbers ascending, everything else as strings with
+// natural-number ordering (so cluster_2 comes before cluster_10).
+function sortCategories(values) {
+  if (values.every((v) => typeof v === "number")) return [...values].sort((a, b) => a - b);
+  return [...values].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+}
+
 function render() {
-  const isBehaviorScore = STATE.colorFeature === BEHAVIOR_SCORE_COLUMN;
+  const feature = STATE.colorFeature;
+  const isBehaviorScore = feature === BEHAVIOR_SCORE_COLUMN;
   el("behavior-score-options").hidden = !isBehaviorScore;
 
   const rows = (isBehaviorScore && STATE.hideUnknownBehaviorScore)
     ? STATE.rows.filter((r) => r[BEHAVIOR_SCORE_COLUMN] !== UNKNOWN_BEHAVIOR_SCORE)
     : STATE.rows;
-  const colorValues = STATE.colorFeature ? rows.map((r) => r[STATE.colorFeature]) : rows.map(() => 0);
+  const colorValues = feature ? rows.map((r) => r[feature]) : rows.map(() => null);
   const uniqueVals = dropNaUnique(colorValues);
-  const categorical = uniqueVals.length < 20;
-  const traces = [];
+  const numeric = uniqueVals.length > 0 && uniqueVals.every((v) => typeof v === "number");
+  const categorical = !numeric || uniqueVals.length < CATEGORICAL_MAX_UNIQUE;
 
-  const hoverText = (i) => {
-    const r = rows[i];
-    return r.session_type ? r.session : `${r.session} (no manifold data exported)`;
+  const hoverText = (j) => {
+    const r = rows[j];
+    const value = isMissing(colorValues[j]) ? "missing" : colorValues[j];
+    const note = r._exported ? "" : "<br>(no manifold data exported)";
+    return `${r.session} (${r.session_type})<br>${feature} = ${value}${note}`;
   };
+  const makeTrace = (idx, marker, name) => ({
+    x: idx.map((j) => rows[j][X_COLUMN]),
+    y: idx.map((j) => rows[j][Y_COLUMN]),
+    mode: "markers",
+    type: "scattergl",
+    marker: { size: 9, line: { width: 0 }, ...marker },
+    text: idx.map(hoverText),
+    customdata: idx,
+    name,
+    hovertemplate: "%{text}<extra></extra>",
+  });
+
+  const traces = [];
+  const presentIdx = [];
+  const missingIdx = [];
+  colorValues.forEach((v, j) => (isMissing(v) ? missingIdx : presentIdx).push(j));
 
   if (categorical) {
-    const order = firstSeenOrder(colorValues);
+    const order = sortCategories(uniqueVals);
     const colors = huslPalette(order.length);
-    for (let i = 0; i < order.length; i++) {
-      const cat = order[i];
-      const idx = [];
-      rows.forEach((r, j) => { if (colorValues[j] === cat) idx.push(j); });
-      traces.push({
-        x: idx.map((j) => rows[j].UMAP1),
-        y: idx.map((j) => rows[j].UMAP2),
-        mode: "markers",
-        type: "scattergl",
-        marker: { size: 9, color: colors[i], line: { width: 0 } },
-        text: idx.map(hoverText),
-        customdata: idx,
-        name: `${STATE.colorFeature} = ${cat}`,
-        hovertemplate: "%{text}<extra></extra>",
-      });
-    }
-  } else {
-    traces.push({
-      x: rows.map((r) => r.UMAP1),
-      y: rows.map((r) => r.UMAP2),
-      mode: "markers",
-      type: "scattergl",
-      marker: {
-        size: 9,
-        color: colorValues,
-        colorscale: "Viridis",
-        colorbar: { title: STATE.colorFeature },
-      },
-      text: rows.map((_, i) => hoverText(i)),
-      customdata: rows.map((_, i) => i),
-      hovertemplate: "%{text}<extra></extra>",
+    order.forEach((cat, i) => {
+      const idx = presentIdx.filter((j) => colorValues[j] === cat);
+      traces.push(makeTrace(idx, { color: colors[i] }, String(cat)));
     });
+  } else if (presentIdx.length) {
+    traces.push(makeTrace(presentIdx, {
+      color: presentIdx.map((j) => colorValues[j]),
+      colorscale: "Viridis",
+      colorbar: { title: { text: feature } },
+    }, feature));
+  }
+  if (missingIdx.length) {
+    traces.push(makeTrace(missingIdx, { color: MISSING_COLOR }, "missing"));
   }
 
   const layout = {
     autosize: true,
     height: 700,
     margin: { l: 50, r: 20, b: 50, t: 20 },
-    xaxis: { title: "UMAP1" },
-    yaxis: { title: "UMAP2" },
-    showlegend: categorical,
-    legend: { title: { text: STATE.colorFeature } },
+    xaxis: { title: { text: X_COLUMN } },
+    yaxis: { title: { text: Y_COLUMN } },
+    // in colormap mode the legend only has the "missing" entry, if any
+    showlegend: categorical || missingIdx.length > 0,
+    legend: { title: { text: feature || "" } },
   };
 
   Plotly.newPlot("plot", traces, layout, { responsive: true }).then((gd) => {
     gd.on("plotly_click", (data) => {
-      const pt = data.points[0];
-      const row = rows[pt.customdata];
+      const row = rows[data.points[0].customdata];
       clearMessage();
-      if (row.session_type) {
+      if (row._exported) {
         window.location.href = `index.html?session_type=${encodeURIComponent(row.session_type)}&session=${encodeURIComponent(row.session)}`;
       } else {
         showMessage(
@@ -228,8 +254,9 @@ function render() {
     });
   });
 
-  const nClickable = rows.filter((r) => r.session_type).length;
-  el("caption").textContent = `${rows.length} session(s), ${nClickable} with manifold data available -- click a point to open its manifold view.`;
+  const nClickable = rows.filter((r) => r._exported).length;
+  const mode = categorical ? "distinct colors" : "colormap";
+  el("caption").textContent = `${rows.length} session(s), ${nClickable} with manifold data available -- colored by ${feature} (${mode}). Click a point to open its manifold view.`;
 }
 
 init();

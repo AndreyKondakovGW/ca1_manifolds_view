@@ -44,22 +44,32 @@ and writes:
                  or null if "avg" is null or has no "position_bin" column
         }
 
-If export_config.yaml's `session_map_csv` is set, also writes:
-    data/session_map.json  -- one record per row of that CSV:
-        {"session": <index/first column>, "UMAP1": ..., "UMAP2": ...,
-        <every other column in the CSV, used as selectable color features
-        by sessions_map.html>..., "session_type": <resolved from
-        session_metadata.csv if this session was actually exported, else
-        null>}. Powers the separate sessions_map.html page (a 2D plot of all
-        sessions; click a point to jump to that session's manifold view --
-        only possible when "session_type" isn't null).
+If session_metadata.csv has map_cord1/map_cord2 columns (written by the
+pipeline's experiments/src/exp_session_manifold_clustering.py -- a 2D UMAP
+embedding of the session-by-session manifold distance matrix), also writes:
+    data/session_map.json  -- one record per session_metadata.csv row with
+        non-null map_cord1 and map_cord2 (the whole CSV, not just the
+        `sessions:` allowlist -- the map is a cross-session overview):
+        {<every session_metadata.csv column as-is, map_cord1/map_cord2
+        rounded like other floats>..., "_exported": <true if this session's
+        manifold JSON exists in data/, i.e. clicking its point in
+        sessions_map.html can open it>}. sessions_map.html offers every
+        column except session/map_cord1/map_cord2 as a color feature.
+        Sessions without coordinates (switcher/chaotic sessions, which
+        aren't in the distance matrix) are left off the map.
+This replaces the earlier, separate `session_map_csv` table (UMAP1/UMAP2).
 
 Settings live in export_config.yaml next to this file (manifold folder path,
 output dir, optional session allowlist, rounding) -- edit that, no code
 changes needed.
 
     python export_data.py
+    python export_data.py --session-map-only   # only rewrite data/session_map.json
+        # (e.g. after re-running the clustering script) -- skips the slow
+        # per-session export and reuses the existing data/session_metadata.json
+        # to tell which sessions are exported/clickable
 """
+import argparse
 import json
 import sys
 from datetime import datetime, timezone
@@ -183,50 +193,38 @@ def compute_geodesic_matrix(avg_df, decimals):
     ]
 
 
-def load_session_map(session_map_csv):
-    """session_map_csv: session name as the index/first column, then UMAP1,
-    UMAP2, plus any number of extra columns used as selectable color
-    features by sessions_map.html (e.g. a cluster label). Returns None
-    (nothing to export) if the setting is blank or the file doesn't exist
-    or is missing UMAP1/UMAP2."""
-    if not session_map_csv:
-        return None
-    path = Path(session_map_csv)
-    if not path.is_absolute():
-        path = (REPO_ROOT / path).resolve()
-    if not path.exists():
-        print(f"session_map_csv is set to {path} but that file doesn't exist -- skipping session map export.")
-        return None
-    df = pd.read_csv(path, index_col=0)
-    missing = {"UMAP1", "UMAP2"} - set(df.columns)
+MAP_COORD_COLUMNS = ("map_cord1", "map_cord2")
+
+
+def export_session_map(metadata, output_dir, decimals, exported_keys):
+    """Write data/session_map.json from session_metadata.csv's map_cord1/
+    map_cord2 columns (see module docstring). exported_keys: set of
+    (session_type, session) pairs that have a manifold JSON in data/ --
+    marks which points sessions_map.html can link to. Writes nothing if the
+    coordinate columns are missing (and removes any stale session_map.json
+    left from an earlier export, so the page shows "not available" instead
+    of an outdated map)."""
+    missing = [c for c in MAP_COORD_COLUMNS if c not in metadata.columns]
     if missing:
-        print(f"session_map_csv at {path} is missing required column(s) {missing} -- skipping session map export.")
-        return None
-    return df
-
-
-def export_session_map(session_map_df, output_dir, decimals, session_type_by_name):
-    """session_type_by_name: {session_name: session_type} for sessions that
-    were actually exported this run (last-wins on a duplicate name, same
-    convention as the session dropdown in app.js) -- lets the map tell
-    sessions_map.html which points are clickable and where they link to."""
+        print(f"session_metadata.csv has no {missing} column(s) -- run the pipeline's "
+              f"experiments/src/exp_session_manifold_clustering.py first; skipping session_map.json.")
+        (output_dir / "session_map.json").unlink(missing_ok=True)
+        return
+    on_map = metadata.dropna(subset=list(MAP_COORD_COLUMNS))
     records = []
-    for session_name, row in session_map_df.iterrows():
-        record = {"session": str(session_name)}
-        for col in session_map_df.columns:
-            v = row[col]
-            if pd.isna(v):
-                record[col] = None
-            elif col in ("UMAP1", "UMAP2") or isinstance(v, (int, float, np.integer, np.floating)):
-                record[col] = round(float(v), decimals) if decimals is not None else float(v)
-            else:
-                record[col] = str(v)
-        record["session_type"] = session_type_by_name.get(str(session_name))
+    for row in on_map.to_dict(orient="records"):
+        # .item() turns numpy scalars (np.bool_, np.int64, ...) into plain
+        # Python values json.dump can serialize
+        record = {k: _json_safe(v.item() if isinstance(v, np.generic) else v) for k, v in row.items()}
+        for c in MAP_COORD_COLUMNS:
+            record[c] = round(float(row[c]), decimals) if decimals is not None else float(row[c])
+        record["_exported"] = (row["session_type"], row["session"]) in exported_keys
         records.append(record)
     with open(output_dir / "session_map.json", "w") as f:
         json.dump(records, f)
-    n_clickable = sum(1 for r in records if r["session_type"] is not None)
-    print(f"Wrote session_map.json: {len(records)} session(s), {n_clickable} with a matching exported session_type.")
+    n_clickable = sum(1 for r in records if r["_exported"])
+    print(f"Wrote session_map.json: {len(records)}/{len(metadata)} session(s) with map coordinates, "
+          f"{n_clickable} with exported manifold data.")
 
 
 def export_session(manifold_folder, session_type, session_name, output_dir, decimals):
@@ -255,6 +253,12 @@ def export_session(manifold_folder, session_type, session_name, output_dir, deci
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--session-map-only", action="store_true",
+                        help="only rewrite data/session_map.json, using the existing "
+                             "data/session_metadata.json to tell which sessions are exported")
+    args = parser.parse_args()
+
     config = load_config()
     manifold_folder = Path(config["manifold_folder"])
     if not manifold_folder.is_absolute():
@@ -269,14 +273,20 @@ def main():
               f"manifold_folder in export_config.yaml.")
         sys.exit(1)
 
-    metadata = pd.read_csv(metadata_path)
+    full_metadata = pd.read_csv(metadata_path)
+    metadata = full_metadata
     if session_allowlist:
         keep = metadata.apply(lambda r: f"{r['session_type']}/{r['session']}" in session_allowlist, axis=1)
         metadata = metadata[keep]
 
-    session_map_df = load_session_map(config.get("session_map_csv"))
-
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.session_map_only:
+        exported_path = output_dir / "session_metadata.json"
+        exported = json.loads(exported_path.read_text()) if exported_path.exists() else []
+        exported_keys = {(r["session_type"], r["session"]) for r in exported}
+        export_session_map(full_metadata, output_dir, decimals, exported_keys)
+        return
 
     exported_rows = []
     print(f"Exporting {len(metadata)} session(s) from {manifold_folder} to {output_dir}")
@@ -311,11 +321,8 @@ def main():
             "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         }, f)
 
-    if session_map_df is not None:
-        # last-wins on a duplicate session name, in exported-row order --
-        # same convention as the session dropdown in app.js
-        session_type_by_name = {str(r.session): r.session_type for r in exported_rows}
-        export_session_map(session_map_df, output_dir, decimals, session_type_by_name)
+    export_session_map(full_metadata, output_dir, decimals,
+                       {(r.session_type, r.session) for r in exported_rows})
 
     print(f"Done. {len(exported_rows)}/{len(metadata)} session(s) exported.")
 

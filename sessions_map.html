@@ -41,9 +41,9 @@
       <span class="topnav-current">Session map</span>
     </nav>
     <h1>Session map</h1>
-    <p class="caption">Each point is one session (from <code>session_map.json</code>, exported from a
-      <code>session_map_csv</code> table -- see <code>export_config.yaml</code>). Click a point to open
-      its manifold view.</p>
+    <p class="caption">Each point is one session, placed by <code>map_cord1</code>/<code>map_cord2</code>
+      from <code>session_metadata.csv</code> (a 2D UMAP of the session-by-session manifold distance
+      matrix). Any other metadata column can be used for coloring. Click a point to open its manifold view.</p>
     <div id="message" class="message" hidden></div>
     <div id="plot"></div>
     <p id="caption" class="caption"></p>

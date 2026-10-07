@@ -28,9 +28,7 @@ This repo is two things bundled together:
 
 1. Edit `export_config.yaml` -- set `manifold_folder` to your processed
    output root, and optionally an allowlist of sessions to export
-   (`sessions:`) if you don't want the whole folder turned into JSON. If you
-   also have a 2D "session map" table (see `sessions_map.html` below), point
-   `session_map_csv` at it too.
+   (`sessions:`) if you don't want the whole folder turned into JSON.
 2. Run the exporter (see Requirements above for what it needs):
 
    ```
@@ -38,7 +36,9 @@ This repo is two things bundled together:
    ```
 
    This (re)writes `data/`. Re-run it any time the source manifold folder
-   changes.
+   changes. `python export_data.py --session-map-only` rewrites just
+   `data/session_map.json` (fast -- no NWB reading), e.g. after re-running
+   the clustering script that writes the map coordinates.
 
    > `data/` ships pre-populated so the site works out of the box -- step 1
    > above replaces it with your own data.
@@ -78,16 +78,19 @@ Sessions with no `manifold` acquisition (stage 2 not run yet) or no
 averaged-manifold CSV show a message instead of a plot.
 
 - **`sessions_map.html`** (linked from the top of `index.html`) -- a
-  separate page: a 2D scatter of `data/session_map.json` (from a
-  `session_map_csv` table you point `export_config.yaml` at -- session name
-  as the index/first column, then `UMAP1`, `UMAP2`, plus any number of extra
-  columns to color by, e.g. a cluster label). Click a point to jump straight
-  to that session's manifold view in `index.html`. A session map is very
-  likely a partial view (only whatever sessions someone happened to
-  embed/cluster), so the page also keeps its own **Session** dropdown --
-  every exported session, independent of what's plotted below -- and a
-  point for a session that wasn't part of the last `export_data.py` run (no
-  matching entry in `session_metadata.json`) still shows on the map, just
+  separate page: a 2D scatter of every session in `session_metadata.csv`
+  that has `map_cord1`/`map_cord2` (a 2D UMAP embedding of the
+  session-by-session manifold distance matrix, written by the pipeline's
+  `experiments/src/exp_session_manifold_clustering.py`; switcher/chaotic
+  sessions have no coordinates and aren't plotted). Every other metadata
+  column (except `session`) can be picked as the color feature: non-numeric
+  columns and numeric ones with fewer than 20 distinct values get distinct
+  colors with a legend, other numeric columns a continuous colormap; missing
+  values are drawn grey. Click a point to jump straight to that session's
+  manifold view in `index.html`. The page also keeps its own **Session**
+  dropdown -- every exported session, independent of what's plotted -- and
+  a point for a session that wasn't part of the last `export_data.py` run
+  (e.g. outside the `sessions:` allowlist) still shows on the map, just
   isn't clickable.
 
 ## Notes
@@ -116,8 +119,8 @@ averaged-manifold CSV show a message instead of a plot.
   [hsluv-js](https://github.com/hsluv/hsluv-js) reference implementation,
   MIT license), so a categorical color-by feature with many distinct values
   never repeats a color. Only `sessions_map.html` loads `vendor/hsluv.js`.
-- `session_map_csv`/`data/session_map.json` are entirely optional and
-  independent of everything else here -- if unset, `sessions_map.html` just
+- `data/session_map.json` is optional and independent of everything else
+  here -- if `session_metadata.csv` has no `map_cord1`/`map_cord2` yet, `sessions_map.html` just
   shows a "not available" message (its session dropdown still works, since
   that only needs `session_metadata.json`) and `index.html` is unaffected.
 - `data/export_info.json`'s `data_source` field (shown in the sidebar) is a
