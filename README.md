@@ -86,7 +86,11 @@ averaged-manifold CSV show a message instead of a plot.
   column (except `session`) can be picked as the color feature: non-numeric
   columns and numeric ones with fewer than 20 distinct values get distinct
   colors with a legend, other numeric columns a continuous colormap; missing
-  values are drawn grey. Click a point to jump straight to that session's
+  values are drawn grey. A separate **Filter by** dropdown (columns with
+  fewer than 10 distinct values) shows only the sessions with the checked
+  value(s) of that column, independent of the color feature -- colors and
+  the colormap range stay fixed across filter changes, so the color
+  distribution within one category can be compared directly. Click a point to jump straight to that session's
   manifold view in `index.html`. The page also keeps its own **Session**
   dropdown -- every exported session, independent of what's plotted -- and
   a point for a session that wasn't part of the last `export_data.py` run

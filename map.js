@@ -33,6 +33,16 @@
  * checkbox (shown only while `behavior_score` is the active color feature)
  * lets those sessions be filtered out of the plot.
  *
+ * Independently of coloring, the "Filter by" dropdown restricts which points
+ * are drawn to chosen values of one categorical feature (any column with
+ * fewer than FILTER_MAX_UNIQUE distinct non-missing values; "missing" is its
+ * own option when present). Values are checkboxes -- none checked means no
+ * filtering. The color mapping (category -> color, colormap range) is always
+ * computed on the unfiltered rows, so a category keeps the same color and the
+ * colorscale the same range whichever filter is active -- that is what makes
+ * comparing a feature's color distribution within one filter category
+ * meaningful.
+ *
  * el/showMessage/clearMessage/huslPalette/dropNaUnique come from common.js;
  * huslPalette in turn needs vendor/hsluv.js loaded first.
  */
@@ -42,6 +52,8 @@ const Y_COLUMN = "map_cord2";
 const RESERVED_COLUMNS = new Set(["session", X_COLUMN, Y_COLUMN]);
 const DEFAULT_COLOR_FEATURE = "manifold_cluster";
 const CATEGORICAL_MAX_UNIQUE = 20;
+const FILTER_MAX_UNIQUE = 10;
+const MISSING_KEY = "__missing__";
 const MISSING_COLOR = "#b0b0b0";
 const BEHAVIOR_SCORE_COLUMN = "behavior_score";
 const UNKNOWN_BEHAVIOR_SCORE = -1;
@@ -64,6 +76,8 @@ const isMissing = (v) => v === null || v === undefined || (typeof v === "number"
 const STATE = {
   rows: [],
   colorFeature: null,
+  filterFeature: "",          // "" = no filter
+  filterSelected: new Set(),  // filterKey()s of the values to keep; empty = keep all
   hideUnknownBehaviorScore: true,
 };
 
@@ -186,12 +200,69 @@ async function loadSessionMap() {
     render();
   };
 
+  setupFilterSelect(featureCols);
+
   el("hide-unknown-behavior-score").addEventListener("change", (e) => {
     STATE.hideUnknownBehaviorScore = e.target.checked;
     render();
   });
 
   render();
+}
+
+// String key for a filter value -- checkbox state is keyed by this so that
+// e.g. 1 and "1" or missing (null/NaN) values compare predictably.
+const filterKey = (v) => (isMissing(v) ? MISSING_KEY : `${typeof v}:${v}`);
+
+function setupFilterSelect(featureCols) {
+  const filterCols = featureCols.filter((col) => {
+    const n = dropNaUnique(STATE.rows.map((r) => r[col])).length;
+    return n > 0 && n < FILTER_MAX_UNIQUE;
+  });
+  const select = el("filter-select");
+  select.innerHTML = "";
+  for (const col of ["", ...filterCols]) {
+    const opt = document.createElement("option");
+    opt.value = col;
+    opt.textContent = col || "— no filter —";
+    select.appendChild(opt);
+  }
+  select.value = STATE.filterFeature;
+  select.onchange = () => {
+    STATE.filterFeature = select.value;
+    STATE.filterSelected = new Set();
+    renderFilterValues();
+    render();
+  };
+  renderFilterValues();
+}
+
+function renderFilterValues() {
+  const col = STATE.filterFeature;
+  el("filter-values-wrap").hidden = !col;
+  const box = el("filter-values");
+  box.innerHTML = "";
+  if (!col) return;
+
+  const values = STATE.rows.map((r) => r[col]);
+  const options = sortCategories(dropNaUnique(values));
+  if (values.some(isMissing)) options.push(null);
+  for (const v of options) {
+    const key = filterKey(v);
+    const count = values.filter((x) => filterKey(x) === key).length;
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = STATE.filterSelected.has(key);
+    cb.addEventListener("change", () => {
+      if (cb.checked) STATE.filterSelected.add(key);
+      else STATE.filterSelected.delete(key);
+      render();
+    });
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(`${isMissing(v) ? "missing" : v} (${count})`));
+    box.appendChild(label);
+  }
 }
 
 // Distinct-color order: numbers ascending, everything else as strings with
@@ -206,19 +277,31 @@ function render() {
   const isBehaviorScore = feature === BEHAVIOR_SCORE_COLUMN;
   el("behavior-score-options").hidden = !isBehaviorScore;
 
-  const rows = (isBehaviorScore && STATE.hideUnknownBehaviorScore)
+  const colorRows = (isBehaviorScore && STATE.hideUnknownBehaviorScore)
     ? STATE.rows.filter((r) => r[BEHAVIOR_SCORE_COLUMN] !== UNKNOWN_BEHAVIOR_SCORE)
     : STATE.rows;
-  const colorValues = feature ? rows.map((r) => r[feature]) : rows.map(() => null);
-  const uniqueVals = dropNaUnique(colorValues);
+  // Color mapping comes from colorRows (pre-filter) so it doesn't shift when
+  // the filter changes -- see the module docstring.
+  const allColorValues = feature ? colorRows.map((r) => r[feature]) : colorRows.map(() => null);
+  const uniqueVals = dropNaUnique(allColorValues);
   const numeric = uniqueVals.length > 0 && uniqueVals.every((v) => typeof v === "number");
   const categorical = !numeric || uniqueVals.length < CATEGORICAL_MAX_UNIQUE;
+
+  const filterCol = STATE.filterFeature;
+  const filterActive = Boolean(filterCol) && STATE.filterSelected.size > 0;
+  const rows = filterActive
+    ? colorRows.filter((r) => STATE.filterSelected.has(filterKey(r[filterCol])))
+    : colorRows;
+  const colorValues = rows.map((r) => (feature ? r[feature] : null));
 
   const hoverText = (j) => {
     const r = rows[j];
     const value = isMissing(colorValues[j]) ? "missing" : colorValues[j];
     const note = r._exported ? "" : "<br>(no manifold data exported)";
-    return `${r.session} (${r.session_type})<br>${feature} = ${value}${note}`;
+    const filterNote = filterCol && filterCol !== feature
+      ? `<br>${filterCol} = ${isMissing(r[filterCol]) ? "missing" : r[filterCol]}`
+      : "";
+    return `${r.session} (${r.session_type})<br>${feature} = ${value}${filterNote}${note}`;
   };
   const makeTrace = (idx, marker, name) => ({
     x: idx.map((j) => rows[j][X_COLUMN]),
@@ -242,12 +325,15 @@ function render() {
     const colors = huslPalette(order.length);
     order.forEach((cat, i) => {
       const idx = presentIdx.filter((j) => colorValues[j] === cat);
+      if (idx.length === 0) return; // category absent under the current filter
       traces.push(makeTrace(idx, { color: colors[i] }, String(cat)));
     });
   } else if (presentIdx.length) {
     traces.push(makeTrace(presentIdx, {
       color: presentIdx.map((j) => colorValues[j]),
       colorscale: "Viridis",
+      cmin: Math.min(...uniqueVals),
+      cmax: Math.max(...uniqueVals),
       colorbar: { title: { text: feature } },
     }, feature));
   }
@@ -284,7 +370,10 @@ function render() {
   const nClickable = rows.filter((r) => r._exported).length;
   const mode = categorical ? "distinct colors" : "colormap";
   const excludedNote = STATE.nExcluded ? ` (${STATE.nExcluded} excluded via bad_sessions.json)` : "";
-  el("caption").textContent = `${rows.length} session(s)${excludedNote}, ${nClickable} with manifold data available -- colored by ${feature} (${mode}). Click a point to open its manifold view.`;
+  const filterNote = filterActive
+    ? ` [filtered: ${filterCol} in {${[...STATE.filterSelected].map((k) => (k === MISSING_KEY ? "missing" : k.slice(k.indexOf(":") + 1))).join(", ")}}, ${rows.length}/${colorRows.length} shown]`
+    : "";
+  el("caption").textContent = `${rows.length} session(s)${excludedNote}${filterNote}, ${nClickable} with manifold data available -- colored by ${feature} (${mode}). Click a point to open its manifold view.`;
 }
 
 init();
