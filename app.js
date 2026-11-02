@@ -16,7 +16,9 @@
  */
 
 const MAZE_GROUPS = ["N2N", "F2F", "N2F", "F2N"];
-const COLOR_FEATURES = ["position", "speed", "time"];
+const COLOR_FEATURES = ["position", "speed", "time", "reward"];
+// Reward zone of each maze, in cm (same as the pipeline's NEAR/FAR_REWARD_ZONE).
+const REWARD_ZONES = { N: [78, 96], F: [120, 138] };
 const FILTER_COLUMNS = [
   { col: "session_type", label: "session_type" },
   { col: "n_groups_after_averaging", label: "n_groups_after_averaging" },
@@ -31,6 +33,7 @@ const STATE = {
   sessionCache: new Map(), // "type/name" -> parsed session json
   viewMode: "full",
   colorChoice: null,
+  avgColorChoice: "group", // "group" | "position"
   selectedMazeGroups: null, // Set, per-session (reset when session changes)
 };
 
@@ -110,6 +113,7 @@ function renderSessionSection() {
     el("session-select").innerHTML = "";
     el("sidebar-view-section").hidden = true;
     el("sidebar-full-options").hidden = true;
+    el("sidebar-avg-options").hidden = true;
     el("session-subheader").textContent = "";
     clearPlot();
     showMessage("No sessions match the current filters.", "warning");
@@ -163,10 +167,12 @@ async function loadAndRenderSession(row) {
     session = await fetchSessionData(row.session_type, row.session);
   } catch (err) {
     el("sidebar-full-options").hidden = true;
+    el("sidebar-avg-options").hidden = true;
     showMessage(`Failed to load data/${row.session_type}/${row.session}.json (${err.message}).`, "error");
     return;
   }
 
+  el("sidebar-avg-options").hidden = STATE.viewMode !== "avg";
   if (STATE.viewMode === "avg") {
     el("sidebar-full-options").hidden = true;
     renderAveraged(session);
@@ -183,9 +189,24 @@ function renderAveraged(session) {
     showMessage("Missing averaged manifold CSV for this session (or it has no 'Group' column).", "error");
     return;
   }
-  const { UMAP_1, UMAP_2, UMAP_3, Group } = session.avg;
-  const X1 = UMAP_1, X2 = UMAP_2, X3 = UMAP_3;
-  plotManifold(X1, X2, X3, Group, "Maze group", STATE.config.plot.avg_plot_point_size);
+  const { UMAP_1, UMAP_2, UMAP_3, Group, position_bin } = session.avg;
+
+  const avgSelect = el("avg-color-select");
+  const posOption = avgSelect.querySelector('option[value="position"]');
+  posOption.disabled = !position_bin;
+  if (!position_bin) STATE.avgColorChoice = "group";
+  avgSelect.value = STATE.avgColorChoice;
+  avgSelect.onchange = () => {
+    STATE.avgColorChoice = avgSelect.value;
+    refreshCurrentSession();
+  };
+
+  const pointSize = STATE.config.plot.avg_plot_point_size;
+  if (STATE.avgColorChoice === "position") {
+    plotManifold(UMAP_1, UMAP_2, UMAP_3, position_bin, "Position (cm)", pointSize, { continuous: true });
+  } else {
+    plotManifold(UMAP_1, UMAP_2, UMAP_3, Group, "Maze group", pointSize);
+  }
 
   const groups = sortMixed(dropNaUnique(Group));
   el("caption").textContent = `${Group.length} averaged points, groups: ${groups.join(", ")}`;
@@ -300,6 +321,12 @@ function renderFull(session) {
   const u1 = idx.map((i) => manifold.UMAP1[i]);
   const u2 = idx.map((i) => manifold.UMAP2[i]);
   const u3 = idx.map((i) => manifold.UMAP3[i]);
+
+  if (STATE.colorChoice === "reward") {
+    renderRewardZones(session, idx, u1, u2, u3, selectedGroups);
+    return;
+  }
+
   let color, colorLabel;
   if (STATE.colorChoice === "position") {
     color = idx.map((i) => manifold.position[i]);
@@ -314,6 +341,83 @@ function renderFull(session) {
 
   plotManifold(u1, u2, u3, color, colorLabel, STATE.config.plot.point_size);
   el("caption").textContent = `${u1.length} points shown -- maze_group in {${selectedGroups.join(", ")}}`;
+}
+
+// "reward zone & licks" coloring: every point grey, except those inside the
+// reward zone of their lap's current maze (last letter of maze_group:
+// N2F -> Far) and the bins with licks (red) / reward deliveries (from the
+// "licks"/"reward" arrays export_data.py takes from the NWB -- log Lick and
+// ActionType == "TrialReward"; absent if add_reward.py wasn't run).
+function renderRewardZones(session, idx, u1, u2, u3, selectedGroups) {
+  const manifold = session.manifold;
+  const maze = lapMazeAt(manifold.t, session.laps);
+  const pointSize = STATE.config.plot.point_size ?? 2;
+
+  const groups = { other: [], zone: [], lick: [], reward: [] };
+  idx.forEach((i, j) => {
+    const zone = REWARD_ZONES[maze[i]];
+    const pos = manifold.position[i];
+    groups[zone && pos >= zone[0] && pos <= zone[1] ? "zone" : "other"].push(j);
+    if (manifold.licks && manifold.licks[i] > 0) groups.lick.push(j);
+    if (manifold.reward && manifold.reward[i] > 0) groups.reward.push(j);
+  });
+
+  const trace = (pts, name, marker, hover) => ({
+    x: pts.map((j) => u1[j]),
+    y: pts.map((j) => u2[j]),
+    z: pts.map((j) => u3[j]),
+    mode: "markers",
+    type: "scatter3d",
+    name,
+    marker: { line: { width: 0 }, ...marker },
+    customdata: pts.map((j) => [manifold.position[idx[j]], hover ? hover[idx[j]] : 0]),
+    hovertemplate: `${name}<br>Position : %{customdata[0]:.1f}` +
+      (hover ? ` -- count %{customdata[1]}` : "") + "<extra></extra>",
+  });
+  const traces = [
+    trace(groups.other, "outside reward zone", { size: pointSize, color: "#c8c8c8", opacity: 0.4 }),
+    trace(groups.zone, "reward zone", { size: pointSize + 1, color: "#2a7fff", opacity: 0.8 }),
+  ];
+  if (manifold.licks) {
+    traces.push(trace(groups.lick, "lick", { size: pointSize + 3, color: "#d62728" }, manifold.licks));
+  }
+  if (manifold.reward) {
+    traces.push(trace(groups.reward, "reward delivery",
+      { size: pointSize + 5, color: "#ffb000", symbol: "diamond", line: { width: 1, color: "#000000" } },
+      manifold.reward));
+  }
+
+  const layout = {
+    autosize: true,
+    height: STATE.config.plot.height ?? 600,
+    margin: { l: 0, r: 0, b: 0, t: 10 },
+    showlegend: true,
+    legend: { itemsizing: "constant" },
+  };
+  Plotly.newPlot("plot", traces, layout, { responsive: true });
+
+  let caption = `${idx.length} points shown -- maze_group in {${selectedGroups.join(", ")}} -- ` +
+    `${groups.zone.length} in reward zone (Near ${REWARD_ZONES.N.join("-")} cm, Far ${REWARD_ZONES.F.join("-")} cm)`;
+  caption += manifold.licks
+    ? `, ${groups.lick.length} bins with licks, ${groups.reward.length} with reward delivery`
+    : " -- no lick/reward data for this session (re-run export_data.py after add_reward.py)";
+  el("caption").textContent = caption;
+}
+
+// Current maze ("N"/"F", the last letter of the lap's maze_group) for every
+// timestamp in sorted `t`, null outside laps -- same single sweep as
+// restrictToMazeGroups.
+function lapMazeAt(t, laps) {
+  const out = new Array(t.length).fill(null);
+  let li = 0;
+  for (let i = 0; i < t.length; i++) {
+    while (li < laps.start.length && t[i] > laps.end[li]) li++;
+    if (li < laps.start.length && t[i] >= laps.start[li]) {
+      const g = laps.maze_group[li];
+      out[i] = g ? g[g.length - 1] : null;
+    }
+  }
+  return out;
 }
 
 function renderFullOptions(availableGroups) {
@@ -373,10 +477,13 @@ function restrictToMazeGroups(t, laps, selectedGroups) {
 
 // ---- plotting, ported from manifold_plot3d's two color branches ----------
 
-function plotManifold(u1, u2, u3, colorValues, colorLabel, pointSize) {
+// opts.continuous forces the colormap branch even for < 20 distinct values
+// (e.g. the averaged manifold's position_bin).
+function plotManifold(u1, u2, u3, colorValues, colorLabel, pointSize, opts = {}) {
   const uniqueVals = dropNaUnique(colorValues);
+  const categorical = !opts.continuous && uniqueVals.length < 20;
   const traces = [];
-  if (uniqueVals.length < 20) {
+  if (categorical) {
     // categorical branch: one trace per distinct value, in first-seen order
     const order = firstSeenOrder(colorValues);
     for (let i = 0; i < order.length; i++) {
@@ -414,7 +521,7 @@ function plotManifold(u1, u2, u3, colorValues, colorLabel, pointSize) {
     autosize: true,
     height: STATE.config.plot.height ?? 600,
     margin: { l: 0, r: 0, b: 0, t: 10 },
-    showlegend: uniqueVals.length < 20,
+    showlegend: categorical,
     legend: { title: { text: colorLabel } },
   };
   Plotly.newPlot("plot", traces, layout, { responsive: true });

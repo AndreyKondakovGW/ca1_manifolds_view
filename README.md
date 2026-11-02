@@ -67,8 +67,17 @@ This repo is two things bundled together:
 - **Sidebar > View > Full manifold** -- plots the selected session's full
   per-bin manifold, colored by position, speed, or time, restricted to the
   `maze_group`(s) chosen in the sidebar (`N2N`/`F2F`/`N2F`/`F2N`).
+  **Color by > reward zone & licks** greys out every point except those in
+  the reward zone of the lap's current maze (Near 78-96 cm, Far 120-138 cm;
+  the maze is the last letter of the lap's `maze_group`), and marks bins with
+  licks as red dots and reward deliveries as gold diamonds. Licks/rewards
+  come from the NWB's `licks`/`reward` acquisitions (the pipeline's
+  `src/create_manifolds/add_reward.py`, from the state-machine log's `Lick`
+  and `ActionType == "TrialReward"`); sessions without them show only the
+  reward zone.
 - **Sidebar > View > Averaged manifold** -- plots the `_avg.csv` data instead
-  (one averaged trajectory per `maze_group` cluster), colored by `Group`.
+  (one averaged trajectory per `maze_group` cluster), colored by `Group` or
+  by `position_bin` (**Averaged manifold options > Color by**).
 - **Sidebar > View > Geodesic matrix** -- heatmap of the pairwise geodesic
   distance between the averaged manifold's own points (computed once by
   `export_data.py`, since it's too slow to run per-click in a browser, and

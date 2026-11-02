@@ -29,9 +29,14 @@ and writes:
         {
           "laps": {"start": [...], "end": [...], "maze_group": [...]},
           "manifold": {"t": [...], "UMAP1": [...], "UMAP2": [...],
-                       "UMAP3": [...], "position": [...], "speed": [...]}
+                       "UMAP3": [...], "position": [...], "speed": [...],
+                       "licks": [...], "reward": [...]}
                       or null if the NWB file has no "manifold" acquisition
-                      (stage 2 wasn't run for it),
+                      (stage 2 wasn't run for it). "licks"/"reward" are
+                      per-bin event counts (ints) from the NWB's "licks"/
+                      "reward" acquisitions (pipeline's
+                      src/create_manifolds/add_reward.py: log Lick and
+                      ActionType == "TrialReward"), or null if absent,
           "avg": {"UMAP_1": [...], "UMAP_2": [...], "UMAP_3": [...],
                   "Group": [...], "position_bin": [...]}
                  or null if the session has no <session>_avg.csv (or it's
@@ -143,7 +148,29 @@ def load_manifold(nwb, decimals):
         "UMAP3": _round(d[:, 2], decimals),
         "position": _round(d[:, 3], decimals),
         "speed": _round(d[:, 4], decimals),
+        "licks": load_event_counts(nwb, "licks", t),
+        "reward": load_event_counts(nwb, "reward", t),
     }
+
+
+def load_event_counts(nwb, name, manifold_t):
+    """Per-manifold-bin event counts from the "licks"/"reward" acquisitions
+    written by the pipeline's src/create_manifolds/add_reward.py (log Lick /
+    ActionType == "TrialReward" events mapped onto the closest manifold bin).
+    Those only cover laps[1:-1], so they're aligned to the manifold's own
+    timestamps here; bins they don't cover get 0. None if the NWB has no such
+    acquisition (add_reward.py not run, or no usable reward log)."""
+    if name not in nwb.acquisition:
+        return None
+    ts = nwb.acquisition[name]
+    event_t = np.asarray(ts.timestamps[:], dtype=float)
+    counts = np.asarray(ts.data[:]).astype(int)
+    out = np.zeros(len(manifold_t), dtype=int)
+    if len(event_t):
+        idx = np.clip(np.searchsorted(manifold_t, event_t), 0, len(manifold_t) - 1)
+        matched = np.isclose(manifold_t[idx], event_t, rtol=0, atol=1e-6)
+        out[idx[matched]] = counts[matched]
+    return out.tolist()
 
 
 def load_avg(avg_path, decimals):
