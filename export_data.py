@@ -49,20 +49,30 @@ and writes:
                  or null if "avg" is null or has no "position_bin" column
         }
 
+Session features are split over several metadata tables in MANIFOLD_FOLDER
+(since 2026-11-12, see the pipeline's src/add_session_features/
+metadata_tables.py): session_metadata.csv (main), averaging_metadata.csv,
+decoding_metadata.csv, behavioural_metadata.csv. data/session_metadata.json
+(the per-session viewer's session list) holds only the main table; the
+session map uses all of them, joined with metadata_tables.load_all_metadata.
+
 If session_metadata.csv has map_cord1/map_cord2 columns (written by the
-pipeline's experiments/src/exp_session_manifold_clustering.py -- a 2D UMAP
-embedding of the session-by-session manifold distance matrix), also writes:
-    data/session_map.json  -- one record per session_metadata.csv row with
-        non-null map_cord1 and map_cord2 (the whole CSV, not just the
-        `sessions:` allowlist -- the map is a cross-session overview):
-        {<every session_metadata.csv column as-is, map_cord1/map_cord2
-        rounded like other floats>..., "_exported": <true if this session's
-        manifold JSON exists in data/, i.e. clicking its point in
-        sessions_map.html can open it>}. sessions_map.html offers every
-        column except session/map_cord1/map_cord2 as a color feature.
-        Sessions without coordinates (switcher/chaotic sessions, which
-        aren't in the distance matrix) are left off the map.
-This replaces the earlier, separate `session_map_csv` table (UMAP1/UMAP2).
+pipeline's stage 4, src/create_manifolds/manifold_clustering.py -- a 2D PCoA
+of the session-by-session manifold distance matrix), also writes:
+    data/session_map.json  -- one record per session with non-null
+        map_cord1 and map_cord2 (the whole table, not just the `sessions:`
+        allowlist -- the map is a cross-session overview):
+        {<every column of the joined metadata tables except the hidden
+        bookkeeping ones (_hidden_map_column: *_version, noisy_lap_ids),
+        map_cord1/map_cord2 rounded like other floats>..., "_exported": <true
+        if this session's manifold JSON exists in data/, i.e. clicking its
+        point in sessions_map.html can open it>}. Sessions without
+        coordinates (switcher/chaotic/small sessions, which aren't in the
+        distance matrix) are left off the map.
+    data/feature_tables.json -- {<table name, e.g. "decoding_metadata">:
+        [<its feature columns present in session_map.json>], ...}, in the
+        order main, averaging, decoding, behavioural. sessions_map.html picks
+        a table first, then a column of it, as the color feature.
 
 Settings live in export_config.yaml next to this file (manifold folder path,
 output dir, optional session allowlist, rounding) -- edit that, no code
@@ -70,6 +80,7 @@ changes needed.
 
     python export_data.py
     python export_data.py --session-map-only   # only rewrite data/session_map.json
+        # and data/feature_tables.json
         # (e.g. after re-running the clustering script) -- skips the slow
         # per-session export and reuses the existing data/session_metadata.json
         # to tell which sessions are exported/clickable
@@ -91,6 +102,9 @@ if str(REPO_ROOT) not in sys.path:
 
 import pynapple as nap
 from src.manifold_dist import geodesic_distance_matrix
+from src.add_session_features.metadata_tables import (
+    AVERAGING_METADATA_FILE, BEHAVIOURAL_METADATA_FILE, DECODING_METADATA_FILE,
+    SESSION_METADATA_FILE, load_all_metadata)
 
 CONFIG_PATH = Path(__file__).resolve().parent / "export_config.yaml"
 
@@ -221,21 +235,53 @@ def compute_geodesic_matrix(avg_df, decimals):
 
 
 MAP_COORD_COLUMNS = ("map_cord1", "map_cord2")
+METADATA_TABLE_FILES = (SESSION_METADATA_FILE, AVERAGING_METADATA_FILE,
+                        DECODING_METADATA_FILE, BEHAVIOURAL_METADATA_FILE)
+# bookkeeping columns not worth coloring by: the ";"-joined list of noisy lap
+# ids (unique per session) and, via _hidden_map_column, every *_version column
+HIDDEN_MAP_COLUMNS = {"noisy_lap_ids"}
 
 
-def export_session_map(metadata, output_dir, decimals, exported_keys):
-    """Write data/session_map.json from session_metadata.csv's map_cord1/
-    map_cord2 columns (see module docstring). exported_keys: set of
+def _hidden_map_column(col):
+    return col in HIDDEN_MAP_COLUMNS or col.endswith("_version")
+
+
+def feature_tables(manifold_folder, columns):
+    """{table name: its feature columns} for the metadata tables in
+    manifold_folder, restricted to `columns` (what session_map.json holds).
+    A column present in several tables is listed under the first (the one
+    load_all_metadata keeps). `session` and the map coordinates are left out."""
+    skip = {"session", *MAP_COORD_COLUMNS}
+    seen, tables = set(), {}
+    for name in METADATA_TABLE_FILES:
+        path = manifold_folder / name
+        if not path.exists():
+            continue
+        cols = [c for c in pd.read_csv(path, nrows=0).columns
+                if c in columns and c not in skip and c not in seen]
+        seen.update(cols)
+        if cols:
+            tables[Path(name).stem] = cols
+    return tables
+
+
+def export_session_map(manifold_folder, output_dir, decimals, exported_keys):
+    """Write data/session_map.json + data/feature_tables.json from the joined
+    metadata tables (load_all_metadata; map_cord1/map_cord2 come from
+    session_metadata.csv, see module docstring). exported_keys: set of
     (session_type, session) pairs that have a manifold JSON in data/ --
     marks which points sessions_map.html can link to. Writes nothing if the
-    coordinate columns are missing (and removes any stale session_map.json
-    left from an earlier export, so the page shows "not available" instead
-    of an outdated map)."""
+    coordinate columns are missing (and removes any stale session_map.json /
+    feature_tables.json left from an earlier export, so the page shows "not
+    available" instead of an outdated map)."""
+    metadata = load_all_metadata(manifold_folder)
+    metadata = metadata[[c for c in metadata.columns if not _hidden_map_column(c)]]
     missing = [c for c in MAP_COORD_COLUMNS if c not in metadata.columns]
     if missing:
         print(f"session_metadata.csv has no {missing} column(s) -- run the pipeline's "
-              f"experiments/src/exp_session_manifold_clustering.py first; skipping session_map.json.")
+              f"stage 4 (src/create_manifolds/manifold_clustering.py) first; skipping session_map.json.")
         (output_dir / "session_map.json").unlink(missing_ok=True)
+        (output_dir / "feature_tables.json").unlink(missing_ok=True)
         return
     on_map = metadata.dropna(subset=list(MAP_COORD_COLUMNS))
     records = []
@@ -249,9 +295,13 @@ def export_session_map(metadata, output_dir, decimals, exported_keys):
         records.append(record)
     with open(output_dir / "session_map.json", "w") as f:
         json.dump(records, f)
+    tables = feature_tables(manifold_folder, set(metadata.columns))
+    with open(output_dir / "feature_tables.json", "w") as f:
+        json.dump(tables, f)
     n_clickable = sum(1 for r in records if r["_exported"])
     print(f"Wrote session_map.json: {len(records)}/{len(metadata)} session(s) with map coordinates, "
-          f"{n_clickable} with exported manifold data.")
+          f"{n_clickable} with exported manifold data; feature tables: "
+          f"{', '.join(f'{k} ({len(v)})' for k, v in tables.items())}.")
 
 
 def export_session(manifold_folder, session_type, session_name, output_dir, decimals):
@@ -312,7 +362,7 @@ def main():
         exported_path = output_dir / "session_metadata.json"
         exported = json.loads(exported_path.read_text()) if exported_path.exists() else []
         exported_keys = {(r["session_type"], r["session"]) for r in exported}
-        export_session_map(full_metadata, output_dir, decimals, exported_keys)
+        export_session_map(manifold_folder, output_dir, decimals, exported_keys)
         return
 
     exported_rows = []
@@ -348,7 +398,7 @@ def main():
             "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         }, f)
 
-    export_session_map(full_metadata, output_dir, decimals,
+    export_session_map(manifold_folder, output_dir, decimals,
                        {(r.session_type, r.session) for r in exported_rows})
 
     print(f"Done. {len(exported_rows)}/{len(metadata)} session(s) exported.")

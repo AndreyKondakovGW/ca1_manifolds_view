@@ -2,6 +2,10 @@
  * Small helpers shared between index.html/app.js (the per-session manifold
  * viewer) and sessions_map.html/map.js (the 2D session map). Load this
  * before either page's own script.
+ *
+ * animalOf/fillSelect back the animal -> session pickers of both pages: an
+ * animal is chosen first and the session dropdown then lists only its
+ * sessions.
  */
 
 // px.colors.qualitative.Plotly, same order as the Python palette.
@@ -72,4 +76,34 @@ function huslPalette(n) {
     colors.push(hsluv.Hsluv.hsluvToHex([hue, 89, 65]));
   }
   return colors;
+}
+
+// Animal a session belongs to: the metadata's `animal_id` column, or (for
+// older exports without it) the session name's prefix before the first "_"
+// (e.g. "EH029_251106" -> "EH029") -- used by both pages' animal -> session
+// pickers.
+function animalOf(row) {
+  const id = row.animal_id;
+  if (id !== null && id !== undefined && id !== "") return String(id);
+  return String(row.session).split("_")[0];
+}
+
+// Fill a <select> with `values` (strings), optionally preceded by a
+// placeholder option with value "", selecting `selected` if present.
+function fillSelect(select, values, { selected = null, placeholder = null, labels = null } = {}) {
+  select.innerHTML = "";
+  if (placeholder !== null) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = placeholder;
+    select.appendChild(opt);
+  }
+  for (const v of values) {
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.textContent = labels ? labels(v) : v;
+    if (v === selected) opt.selected = true;
+    select.appendChild(opt);
+  }
+  if (selected === null && placeholder !== null) select.value = "";
 }

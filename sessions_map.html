@@ -17,19 +17,23 @@
     <div id="sidebar-session-picker" hidden>
       <h2>Session</h2>
       <p class="caption">Every exported session, not just the ones plotted below
-        (<code>session_map.json</code> may not cover all of them).</p>
+        (<code>session_map.json</code> may not cover all of them). Pick the animal first.</p>
+      <label class="field-label" id="animal-select-label" for="animal-select"></label>
+      <select id="animal-select"></select>
       <label class="field-label" id="session-select-label" for="session-select"></label>
       <select id="session-select"></select>
     </div>
 
     <div id="sidebar-map-options" hidden>
       <h2>Map options</h2>
+      <label class="field-label" for="table-select">Feature table</label>
+      <select id="table-select"></select>
       <label class="field-label" for="color-select">Color by</label>
       <select id="color-select"></select>
       <div id="behavior-score-options" class="checkbox-group" hidden>
         <label>
           <input type="checkbox" id="hide-unknown-behavior-score" checked>
-          Hide unknown (behavior_score = -1)
+          Hide unknown (behavior score = -1)
         </label>
       </div>
 
@@ -49,8 +53,9 @@
     </nav>
     <h1>Session map</h1>
     <p class="caption">Each point is one session, placed by <code>map_cord1</code>/<code>map_cord2</code>
-      from <code>session_metadata.csv</code> (a 2D UMAP of the session-by-session manifold distance
-      matrix). Any other metadata column can be used for coloring. Click a point to open its manifold view.</p>
+      from <code>session_metadata.csv</code> (a 2D PCoA of the session-by-session manifold distance
+      matrix). Any column of the metadata tables (session, averaging, decoding, behavioural) can be
+      used for coloring -- pick the table, then the feature. Click a point to open its manifold view.</p>
     <div id="message" class="message" hidden></div>
     <div id="plot"></div>
     <p id="caption" class="caption"></p>

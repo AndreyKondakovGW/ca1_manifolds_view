@@ -10,7 +10,10 @@
  * bugs introduced here):
  *   - an emptied filter selection means "no filter" (show everything), not
  *     "show nothing".
- *   - the session dropdown is keyed by session name alone; if two
+ *   - the session dropdown is keyed by session name alone (within the
+ *     animal picked in the Animal dropdown above it, which lists the animals
+ *     left after the metadata filters; a deep link selects its session's
+ *     animal); if two
  *     session_types share a session name, the later one (in metadata row
  *     order) wins.
  */
@@ -29,6 +32,7 @@ const STATE = {
   config: null,
   metadata: [],
   filterSelections: {}, // col -> Set of selected values (undefined = not yet initialized)
+  selectedAnimal: null, // animalOf(row) -- the session dropdown lists only this animal's sessions
   selectedSession: null, // session name (string)
   sessionCache: new Map(), // "type/name" -> parsed session json
   viewMode: "full",
@@ -109,6 +113,8 @@ function renderSessionSection() {
   el("sidebar-session-section").hidden = false;
 
   if (filteredRows.length === 0) {
+    el("animal-select-label").textContent = "";
+    el("animal-select").innerHTML = "";
     el("session-select-label").textContent = "";
     el("session-select").innerHTML = "";
     el("sidebar-view-section").hidden = true;
@@ -120,9 +126,26 @@ function renderSessionSection() {
     return;
   }
 
+  // animal first: keep the chosen animal if it survived the filters, else the
+  // animal of the current (e.g. deep-linked) session, else the first one
+  const animalCounts = new Map();
+  for (const row of filteredRows) animalCounts.set(animalOf(row), (animalCounts.get(animalOf(row)) || 0) + 1);
+  const animals = sortMixed([...animalCounts.keys()]);
+  if (!STATE.selectedAnimal || !animalCounts.has(STATE.selectedAnimal)) {
+    const current = filteredRows.find((r) => String(r.session) === STATE.selectedSession);
+    STATE.selectedAnimal = current ? animalOf(current) : animals[0];
+  }
+  el("animal-select-label").textContent = `Animal (${animals.length})`;
+  fillSelect(el("animal-select"), animals, {
+    selected: STATE.selectedAnimal,
+    labels: (a) => `${a} (${animalCounts.get(a)})`,
+  });
+
   // last-wins on duplicate session names, in row order
   const labelToRow = new Map();
-  for (const row of filteredRows) labelToRow.set(String(row.session), row);
+  for (const row of filteredRows) {
+    if (animalOf(row) === STATE.selectedAnimal) labelToRow.set(String(row.session), row);
+  }
   const sessionLabels = sortMixed([...labelToRow.keys()]);
 
   if (!STATE.selectedSession || !labelToRow.has(STATE.selectedSession)) {
@@ -130,15 +153,7 @@ function renderSessionSection() {
   }
 
   el("session-select-label").textContent = `Session (${sessionLabels.length})`;
-  const select = el("session-select");
-  select.innerHTML = "";
-  for (const label of sessionLabels) {
-    const opt = document.createElement("option");
-    opt.value = label;
-    opt.textContent = label;
-    if (label === STATE.selectedSession) opt.selected = true;
-    select.appendChild(opt);
-  }
+  fillSelect(el("session-select"), sessionLabels, { selected: STATE.selectedSession });
 
   const row = labelToRow.get(STATE.selectedSession);
   el("session-subheader").textContent = `${row.session_type} / ${row.session}`;
@@ -585,6 +600,12 @@ async function init() {
     );
     return;
   }
+
+  el("animal-select").addEventListener("change", (e) => {
+    STATE.selectedAnimal = e.target.value;
+    STATE.colorChoice = null;
+    renderSessionSection(); // switches to the animal's first session
+  });
 
   el("session-select").addEventListener("change", (e) => {
     STATE.selectedSession = e.target.value;

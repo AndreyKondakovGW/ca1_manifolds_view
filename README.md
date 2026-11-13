@@ -63,7 +63,9 @@ This repo is two things bundled together:
   exported session in a dropdown, filterable by `session_type`,
   `n_groups_after_averaging`, and `manifold_cluster` (each filter only
   appears if that column exists in your metadata, and each filter's option
-  list narrows based on the ones above it).
+  list narrows based on the ones above it). Below the filters, pick the
+  **Animal** first (`animal_id`, or the session name's prefix before `_`);
+  the session dropdown then lists only that animal's sessions.
 - **Sidebar > View > Full manifold** -- plots the selected session's full
   per-bin manifold, colored by position, speed, or time, restricted to the
   `maze_group`(s) chosen in the sidebar (`N2N`/`F2F`/`N2F`/`F2N`).
@@ -88,11 +90,17 @@ averaged-manifold CSV show a message instead of a plot.
 
 - **`sessions_map.html`** (linked from the top of `index.html`) -- a
   separate page: a 2D scatter of every session in `session_metadata.csv`
-  that has `map_cord1`/`map_cord2` (a 2D UMAP embedding of the
-  session-by-session manifold distance matrix, written by the pipeline's
-  `experiments/src/exp_session_manifold_clustering.py`; switcher/chaotic
-  sessions have no coordinates and aren't plotted). Every other metadata
-  column (except `session`) can be picked as the color feature: non-numeric
+  that has `map_cord1`/`map_cord2` (a 2D PCoA of the session-by-session
+  manifold distance matrix, written by the pipeline's stage 4,
+  `src/create_manifolds/manifold_clustering.py`; switcher/chaotic/small
+  sessions have no coordinates and aren't plotted). Session features are
+  stored in four metadata tables (`session_metadata.csv`,
+  `averaging_metadata.csv`, `decoding_metadata.csv`,
+  `behavioural_metadata.csv`); `export_data.py` joins them into
+  `data/session_map.json` and records which column belongs to which table in
+  `data/feature_tables.json`. Pick a **Feature table**, then any of its
+  columns (except `session`; `*_version` and `noisy_lap_ids` are not
+  exported) as the color feature: non-numeric
   columns and numeric ones with fewer than 20 distinct values get distinct
   colors with a legend, other numeric columns a continuous colormap; missing
   values are drawn grey. A separate **Filter by** dropdown (columns with
@@ -100,8 +108,9 @@ averaged-manifold CSV show a message instead of a plot.
   value(s) of that column, independent of the color feature -- colors and
   the colormap range stay fixed across filter changes, so the color
   distribution within one category can be compared directly. Click a point to jump straight to that session's
-  manifold view in `index.html`. The page also keeps its own **Session**
-  dropdown -- every exported session, independent of what's plotted -- and
+  manifold view in `index.html`. The page also keeps its own **Animal** ->
+  **Session** dropdowns -- every exported session, independent of what's
+  plotted, the session list restricted to the chosen animal -- and
   a point for a session that wasn't part of the last `export_data.py` run
   (e.g. outside the `sessions:` allowlist) still shows on the map, just
   isn't clickable. Sessions listed in `bad_sessions.json`

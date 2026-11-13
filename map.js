@@ -7,9 +7,17 @@
  * to index.html with that session pre-selected
  * (index.html?session_type=<type>&session=<name>), read there by app.js.
  *
- * Every session_metadata.csv column except `session`, `map_cord1` and
- * `map_cord2` (and the exporter's own `_`-prefixed bookkeeping fields) is a
- * selectable color feature. How a feature is colored:
+ * Session features live in several metadata tables (session_metadata.csv
+ * main, averaging_, decoding_ and behavioural_metadata.csv -- the pipeline's
+ * src/add_session_features/metadata_tables.py); export_data.py joins them
+ * into session_map.json and lists which column came from which table in
+ * data/feature_tables.json. The sidebar picks a "Feature table" first, then
+ * one of its columns as the color feature (default: manifold_cluster); the
+ * "Filter by" dropdown groups its columns by table the same way. Without
+ * feature_tables.json (older export) all columns form one group. Every
+ * column except `session`, `map_cord1` and `map_cord2` (and the exporter's
+ * own `_`-prefixed bookkeeping fields) is selectable. How a feature is
+ * colored:
  *   - non-numeric (strings, booleans, e.g. session_type, manifold_cluster):
  *     always distinct colors, one legend entry per value;
  *   - numeric with fewer than CATEGORICAL_MAX_UNIQUE distinct values (e.g.
@@ -28,10 +36,15 @@
  * Session dropdown and in index.html's manifold view. A missing/invalid
  * bad_sessions.json just means nothing is excluded.
  *
- * `behavior_score`, if present, uses a sentinel of -1 for sessions with no
- * known score -- since that would otherwise distort the colorscale, a
- * checkbox (shown only while `behavior_score` is the active color feature)
- * lets those sessions be filtered out of the plot.
+ * `behavior score` (`behavior_score` in older exports) may use a sentinel of
+ * -1 for sessions with no known score -- since that would otherwise distort
+ * the colorscale, a checkbox (shown only while that column is the active
+ * color feature and some session has -1) lets those sessions be filtered out
+ * of the plot.
+ *
+ * The page's Session picker (independent of the map) is animal first: the
+ * session dropdown lists only the chosen animal's sessions (animalOf in
+ * common.js).
  *
  * Independently of coloring, the "Filter by" dropdown restricts which points
  * are drawn to chosen values of one categorical feature (any column with
@@ -55,10 +68,12 @@ const CATEGORICAL_MAX_UNIQUE = 30;
 const FILTER_MAX_UNIQUE = 30;
 const MISSING_KEY = "__missing__";
 const MISSING_COLOR = "#b0b0b0";
-const BEHAVIOR_SCORE_COLUMN = "behavior_score";
+// old export name / current behavioural_metadata.csv name
+const BEHAVIOR_SCORE_COLUMNS = new Set(["behavior_score", "behavior score"]);
 const UNKNOWN_BEHAVIOR_SCORE = -1;
 
 const BAD_SESSIONS_PATH = "bad_sessions.json";
+const FEATURE_TABLES_PATH = "data/feature_tables.json";
 
 async function loadBadSessions() {
   try {
@@ -75,6 +90,7 @@ const isMissing = (v) => v === null || v === undefined || (typeof v === "number"
 
 const STATE = {
   rows: [],
+  tables: {},                // {table name: [columns]}, see loadFeatureTables
   colorFeature: null,
   filterFeature: "",          // "" = no filter
   filterSelected: new Set(),  // filterKey()s of the values to keep; empty = keep all
@@ -113,25 +129,36 @@ async function loadSessionPicker() {
   }
   if (metadata.length === 0) return;
 
-  // last-wins on a duplicate session name, same convention as app.js
-  const labelToRow = new Map();
-  for (const row of metadata) labelToRow.set(String(row.session), row);
-  const sessionLabels = sortMixed([...labelToRow.keys()]);
+  // animal first, then that animal's sessions
+  const animalCounts = new Map();
+  for (const row of metadata) animalCounts.set(animalOf(row), (animalCounts.get(animalOf(row)) || 0) + 1);
+  const animals = sortMixed([...animalCounts.keys()]);
 
   el("sidebar-session-picker").hidden = false;
-  el("session-select-label").textContent = `Session (${sessionLabels.length})`;
+  el("animal-select-label").textContent = `Animal (${animals.length})`;
+  const animalSelect = el("animal-select");
+  fillSelect(animalSelect, animals, {
+    placeholder: "— pick an animal —",
+    labels: (a) => `${a} (${animalCounts.get(a)})`,
+  });
+
+  // last-wins on a duplicate session name, same convention as app.js
+  const labelToRow = new Map();
   const select = el("session-select");
-  select.innerHTML = "";
-  const placeholder = document.createElement("option");
-  placeholder.textContent = "— pick a session —";
-  placeholder.value = "";
-  select.appendChild(placeholder);
-  for (const label of sessionLabels) {
-    const opt = document.createElement("option");
-    opt.value = label;
-    opt.textContent = label;
-    select.appendChild(opt);
-  }
+  const fillSessions = () => {
+    labelToRow.clear();
+    for (const row of metadata) {
+      if (animalOf(row) === animalSelect.value) labelToRow.set(String(row.session), row);
+    }
+    const sessionLabels = sortMixed([...labelToRow.keys()]);
+    el("session-select-label").textContent = `Session (${sessionLabels.length})`;
+    fillSelect(select, sessionLabels, {
+      placeholder: animalSelect.value ? "— pick a session —" : "— pick an animal first —",
+    });
+    select.disabled = !animalSelect.value;
+  };
+  animalSelect.onchange = fillSessions;
+  fillSessions();
   select.onchange = () => {
     if (!select.value) return;
     const row = labelToRow.get(select.value);
@@ -185,20 +212,18 @@ async function loadSessionMap() {
   // union over all rows -- a column can be null/absent on some records
   const featureCols = [...new Set(rows.flatMap((r) => Object.keys(r)))]
     .filter((k) => !RESERVED_COLUMNS.has(k) && !k.startsWith("_"));
-  const select = el("color-select");
-  select.innerHTML = "";
-  for (const col of featureCols) {
-    const opt = document.createElement("option");
-    opt.value = col;
-    opt.textContent = col;
-    select.appendChild(opt);
-  }
-  STATE.colorFeature = featureCols.includes(DEFAULT_COLOR_FEATURE) ? DEFAULT_COLOR_FEATURE : (featureCols[0] || null);
-  select.value = STATE.colorFeature || "";
-  select.onchange = () => {
-    STATE.colorFeature = select.value;
+  STATE.tables = await loadFeatureTables(featureCols);
+
+  const tableSelect = el("table-select");
+  const tableNames = Object.keys(STATE.tables);
+  fillSelect(tableSelect, tableNames, { labels: (t) => `${tableLabel(t)} (${STATE.tables[t].length})` });
+  const defaultTable = tableNames.find((t) => STATE.tables[t].includes(DEFAULT_COLOR_FEATURE)) || tableNames[0];
+  tableSelect.value = defaultTable || "";
+  tableSelect.onchange = () => {
+    fillColorSelect(tableSelect.value, null);
     render();
   };
+  fillColorSelect(defaultTable, DEFAULT_COLOR_FEATURE);
 
   setupFilterSelect(featureCols);
 
@@ -208,6 +233,45 @@ async function loadSessionMap() {
   });
 
   render();
+}
+
+// {table name: [columns]} from data/feature_tables.json (export_data.py),
+// restricted to columns actually in session_map.json; columns no table claims
+// go to an "other" group. Without the file (older export) every column is in
+// one "all features" group.
+async function loadFeatureTables(featureCols) {
+  let tables = {};
+  try {
+    const resp = await fetch(FEATURE_TABLES_PATH);
+    if (resp.ok) tables = await resp.json();
+  } catch (_) {
+    // optional file
+  }
+  const present = new Set(featureCols);
+  const out = {};
+  const claimed = new Set();
+  for (const [name, cols] of Object.entries(tables)) {
+    const kept = cols.filter((c) => present.has(c) && !claimed.has(c));
+    kept.forEach((c) => claimed.add(c));
+    if (kept.length) out[name] = kept;
+  }
+  const rest = featureCols.filter((c) => !claimed.has(c));
+  if (rest.length) out[Object.keys(out).length ? "other" : "all features"] = rest;
+  return out;
+}
+
+// "decoding_metadata" -> "decoding"
+const tableLabel = (name) => name.replace(/_metadata$/, "");
+
+function fillColorSelect(table, preferred) {
+  const cols = STATE.tables[table] || [];
+  const select = el("color-select");
+  STATE.colorFeature = cols.includes(preferred) ? preferred : (cols[0] || null);
+  fillSelect(select, cols, { selected: STATE.colorFeature });
+  select.onchange = () => {
+    STATE.colorFeature = select.value;
+    render();
+  };
 }
 
 // String key for a filter value -- checkbox state is keyed by this so that
@@ -221,11 +285,23 @@ function setupFilterSelect(featureCols) {
   });
   const select = el("filter-select");
   select.innerHTML = "";
-  for (const col of ["", ...filterCols]) {
-    const opt = document.createElement("option");
-    opt.value = col;
-    opt.textContent = col || "— no filter —";
-    select.appendChild(opt);
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "— no filter —";
+  select.appendChild(none);
+  // one <optgroup> per metadata table, same grouping as the color picker
+  for (const [table, cols] of Object.entries(STATE.tables)) {
+    const groupCols = cols.filter((c) => filterCols.includes(c));
+    if (!groupCols.length) continue;
+    const group = document.createElement("optgroup");
+    group.label = tableLabel(table);
+    for (const col of groupCols) {
+      const opt = document.createElement("option");
+      opt.value = col;
+      opt.textContent = col;
+      group.appendChild(opt);
+    }
+    select.appendChild(group);
   }
   select.value = STATE.filterFeature;
   select.onchange = () => {
@@ -274,11 +350,12 @@ function sortCategories(values) {
 
 function render() {
   const feature = STATE.colorFeature;
-  const isBehaviorScore = feature === BEHAVIOR_SCORE_COLUMN;
+  const isBehaviorScore = BEHAVIOR_SCORE_COLUMNS.has(feature)
+    && STATE.rows.some((r) => r[feature] === UNKNOWN_BEHAVIOR_SCORE);
   el("behavior-score-options").hidden = !isBehaviorScore;
 
   const colorRows = (isBehaviorScore && STATE.hideUnknownBehaviorScore)
-    ? STATE.rows.filter((r) => r[BEHAVIOR_SCORE_COLUMN] !== UNKNOWN_BEHAVIOR_SCORE)
+    ? STATE.rows.filter((r) => r[feature] !== UNKNOWN_BEHAVIOR_SCORE)
     : STATE.rows;
   // Color mapping comes from colorRows (pre-filter) so it doesn't shift when
   // the filter changes -- see the module docstring.
