@@ -188,7 +188,21 @@ select {
   border: 1px solid #f0dd9a;
 }
 
+.message.info {
+  background: #e8f1fc;
+  color: #1c3d66;
+  border: 1px solid #b8d2f2;
+}
+
+/* view-mode option unavailable for this session (no averaged manifold) */
+.radio-group label.disabled {
+  color: var(--text-secondary);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 @media (prefers-color-scheme: dark) {
+  .message.info { background: #17263a; color: #b3d1ff; border-color: #26456b; }
   .message.error { background: #3a1717; color: #ffb3b3; border-color: #6b2626; }
   .message.warning { background: #3a3117; color: #ffe08a; border-color: #6b5a26; }
 }

@@ -63,7 +63,10 @@ This repo is two things bundled together:
   exported session in a dropdown, filterable by `session_type` and
   `manifold_cluster` (each filter only
   appears if that column exists in your metadata, and each filter's option
-  list narrows based on the ones above it). Below the filters, pick the
+  list narrows based on the ones above it). Sessions with no value in a
+  filter column (e.g. no `manifold_cluster`, which is the case for sessions
+  whose lap averaging found 0 groups) appear under that filter's **none**
+  option. Below the filters, pick the
   **Animal** first (`animal_id`, or the session name's prefix before `_`);
   the session dropdown then lists only that animal's sessions.
 - **Sidebar > View > Full manifold** -- plots the selected session's full
@@ -83,7 +86,9 @@ This repo is two things bundled together:
   Maze-group colors are fixed per group (blues = current maze Far: F2F
   dark, N2F light; oranges = current maze Near: N2N dark, F2N light); a
   switcher session's sub-groups (`N2N_0`, `N2N_1`, ...) get shades of their
-  group's color.
+  group's color. Sessions without an averaged manifold
+  (`n_groups_after_averaging` = 0) still open, but only in the full-manifold
+  view: the Averaged manifold and Geodesic matrix options are greyed out.
 - **Remembered settings** -- both pages save their sidebar choices (manifold
   viewer: filters, animal, session, view, color options, maze_group boxes;
   session map: feature table, color feature, filter and its values) in the

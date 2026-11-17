@@ -24,6 +24,17 @@
  * overrides the saved session and adds its session_type / manifold_cluster
  * to the restored filters if they would hide it.
  *
+ * Missing filter values: a session with no value in a filter column (e.g. no
+ * manifold_cluster -- sessions whose lap averaging found 0 groups are never
+ * clustered) gets a "none" option (MISSING_FILTER_VALUE, stored as null) in
+ * that filter instead of being silently dropped by it.
+ *
+ * Sessions without an averaged manifold (n_groups_after_averaging == 0, or
+ * an empty _avg.csv -> session.avg null): the "Averaged manifold" and
+ * "Geodesic matrix" radio buttons are disabled and the full manifold is
+ * shown; the chosen view mode itself is kept, so the next session that has
+ * an averaged manifold opens in it again.
+ *
  * Averaged manifold, "Color by > maze group": colors come from common.js's
  * groupColor (one color family per maze group, a shade per sub-group
  * N2N_0, N2N_1, ...), not from the order the groups appear in.
@@ -57,12 +68,18 @@ const STATE = {
 // ---- cascading metadata filters (session_type -> manifold_cluster), mirroring the original app's sequential filter
 // narrowing -----------------------------------------------------------
 
+// Option standing for "no value" in a metadata filter (see module docstring).
+const MISSING_FILTER_VALUE = null;
+const isMissingValue = (v) => v === null || v === undefined || (typeof v === "number" && Number.isNaN(v));
+const filterValue = (v) => (isMissingValue(v) ? MISSING_FILTER_VALUE : v);
+
 function computeFilterChain() {
   let df = STATE.metadata;
   const chain = []; // {col, label, options, selected} per rendered filter
   for (const { col, label } of FILTER_COLUMNS) {
     if (df.length === 0 || !(col in df[0])) continue; // column absent -> no-op, no widget
     const options = sortMixed(dropNaUnique(df.map((r) => r[col])));
+    if (df.some((r) => isMissingValue(r[col]))) options.push(MISSING_FILTER_VALUE);
     if (STATE.filterSelections[col] === undefined) {
       STATE.filterSelections[col] = new Set(options);
     } else {
@@ -75,7 +92,7 @@ function computeFilterChain() {
     chain.push({ col, label, options, selected });
     // "if not selected: return df" -- an emptied multiselect is a no-op, not a "show nothing" filter
     if (selected.size > 0) {
-      df = df.filter((r) => selected.has(r[col]));
+      df = df.filter((r) => selected.has(filterValue(r[col])));
     }
   }
   return { filteredRows: df, chain };
@@ -105,7 +122,7 @@ function renderFilters(chain) {
         renderSessionSection();
       });
       optLabel.appendChild(cb);
-      optLabel.appendChild(document.createTextNode(String(opt)));
+      optLabel.appendChild(document.createTextNode(opt === MISSING_FILTER_VALUE ? "none" : String(opt)));
       box.appendChild(optLabel);
     }
     wrap.appendChild(box);
@@ -234,15 +251,29 @@ async function loadAndRenderSession(row) {
     return;
   }
 
-  el("sidebar-avg-options").hidden = STATE.viewMode !== "avg";
-  if (STATE.viewMode === "avg") {
+  // no averaged manifold -> avg / geo views unavailable, fall back to full (STATE.viewMode is kept)
+  const hasAvg = Boolean(session.avg) && Number(row.n_groups_after_averaging) !== 0;
+  for (const mode of ["avg", "geo"]) {
+    const radio = document.querySelector(`input[name="view-mode"][value="${mode}"]`);
+    radio.disabled = !hasAvg;
+    radio.parentElement.classList.toggle("disabled", !hasAvg);
+    radio.parentElement.title = hasAvg ? "" : "No averaged manifold for this session (0 groups after averaging)";
+  }
+  const viewMode = hasAvg ? STATE.viewMode : "full";
+  document.querySelector(`input[name="view-mode"][value="${viewMode}"]`).checked = true;
+
+  el("sidebar-avg-options").hidden = viewMode !== "avg";
+  if (viewMode === "avg") {
     el("sidebar-full-options").hidden = true;
     renderAveraged(session);
-  } else if (STATE.viewMode === "geo") {
+  } else if (viewMode === "geo") {
     el("sidebar-full-options").hidden = true;
     renderGeodesic(session);
   } else {
     renderFull(session);
+    if (!hasAvg && STATE.viewMode !== "full") {
+      showMessage("This session has no averaged manifold (0 groups after averaging) -- showing the full manifold.", "info");
+    }
   }
 }
 
@@ -686,7 +717,7 @@ async function init() {
       STATE.selectedAnimal = animalOf(match);
       for (const { col } of FILTER_COLUMNS) {
         const sel = STATE.filterSelections[col];
-        if (sel && sel.size > 0 && col in match) sel.add(match[col]);
+        if (sel && sel.size > 0) sel.add(filterValue(match[col]));
       }
     }
   }
