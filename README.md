@@ -60,8 +60,8 @@ This repo is two things bundled together:
 ## What it does
 
 - **Sidebar > Session** -- loads `data/session_metadata.json` and lists every
-  exported session in a dropdown, filterable by `session_type`,
-  `n_groups_after_averaging`, and `manifold_cluster` (each filter only
+  exported session in a dropdown, filterable by `session_type` and
+  `manifold_cluster` (each filter only
   appears if that column exists in your metadata, and each filter's option
   list narrows based on the ones above it). Below the filters, pick the
   **Animal** first (`animal_id`, or the session name's prefix before `_`);
@@ -80,6 +80,16 @@ This repo is two things bundled together:
 - **Sidebar > View > Averaged manifold** -- plots the `_avg.csv` data instead
   (one averaged trajectory per `maze_group` cluster), colored by `Group` or
   by `position_bin` (**Averaged manifold options > Color by**).
+  Maze-group colors are fixed per group (blues = current maze Far: F2F
+  dark, N2F light; oranges = current maze Near: N2N dark, F2N light); a
+  switcher session's sub-groups (`N2N_0`, `N2N_1`, ...) get shades of their
+  group's color.
+- **Remembered settings** -- both pages save their sidebar choices (manifold
+  viewer: filters, animal, session, view, color options, maze_group boxes;
+  session map: feature table, color feature, filter and its values) in the
+  browser's localStorage, so switching between the pages (or reloading)
+  keeps them. The session map's Session picker starts on the viewer's
+  current session. **Clear cache & reload** also resets them.
 - **Sidebar > View > Geodesic matrix** -- heatmap of the pairwise geodesic
   distance between the averaged manifold's own points (computed once by
   `export_data.py`, since it's too slow to run per-click in a browser, and

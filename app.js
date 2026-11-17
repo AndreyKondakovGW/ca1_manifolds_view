@@ -16,6 +16,17 @@
  *     animal); if two
  *     session_types share a session name, the later one (in metadata row
  *     order) wins.
+ *
+ * Sidebar choices (filters, animal, session, view mode, color choices,
+ * maze_group checkboxes) are saved to localStorage (saveViewerState, keys in
+ * common.js) on every render and restored on load, so they survive switching
+ * to sessions_map.html and back. A deep link from the map (?session=...)
+ * overrides the saved session and adds its session_type / manifold_cluster
+ * to the restored filters if they would hide it.
+ *
+ * Averaged manifold, "Color by > maze group": colors come from common.js's
+ * groupColor (one color family per maze group, a shade per sub-group
+ * N2N_0, N2N_1, ...), not from the order the groups appear in.
  */
 
 const MAZE_GROUPS = ["N2N", "F2F", "N2F", "F2N"];
@@ -24,7 +35,6 @@ const COLOR_FEATURES = ["position", "speed", "time", "reward"];
 const REWARD_ZONES = { N: [78, 96], F: [120, 138] };
 const FILTER_COLUMNS = [
   { col: "session_type", label: "session_type" },
-  { col: "n_groups_after_averaging", label: "n_groups_after_averaging" },
   { col: "manifold_cluster", label: "manifold_cluster" },
 ];
 
@@ -44,8 +54,7 @@ const STATE = {
 // el/showMessage/clearMessage/clearPlot/dropNaUnique/sortMixed/
 // firstSeenOrder/PALETTE come from common.js.
 
-// ---- cascading metadata filters (session_type -> n_groups_after_averaging
-// -> manifold_cluster), mirroring the original app's sequential filter
+// ---- cascading metadata filters (session_type -> manifold_cluster), mirroring the original app's sequential filter
 // narrowing -----------------------------------------------------------
 
 function computeFilterChain() {
@@ -123,6 +132,7 @@ function renderSessionSection() {
     el("session-subheader").textContent = "";
     clearPlot();
     showMessage("No sessions match the current filters.", "warning");
+    saveViewerState();
     return;
   }
 
@@ -172,7 +182,44 @@ async function fetchSessionData(sessionType, sessionName) {
   return json;
 }
 
+// ---- remembered settings (see the module docstring) ----------------------
+
+function saveViewerState() {
+  const filters = {};
+  for (const [col, sel] of Object.entries(STATE.filterSelections)) filters[col] = [...sel];
+  saveSettings(SETTINGS_KEYS.viewer, {
+    filters,
+    selectedAnimal: STATE.selectedAnimal,
+    selectedSession: STATE.selectedSession,
+    viewMode: STATE.viewMode,
+    colorChoice: STATE.colorChoice,
+    avgColorChoice: STATE.avgColorChoice,
+    mazeGroups: STATE.selectedMazeGroups ? [...STATE.selectedMazeGroups] : null,
+    mazeGroupsForSession: STATE._mazeGroupsForSession ?? null,
+  });
+}
+
+function restoreViewerState() {
+  const s = loadSettings(SETTINGS_KEYS.viewer);
+  const cols = new Set(FILTER_COLUMNS.map((f) => f.col));
+  for (const [col, vals] of Object.entries(s.filters || {})) {
+    if (cols.has(col) && Array.isArray(vals)) STATE.filterSelections[col] = new Set(vals);
+  }
+  if (s.selectedAnimal) STATE.selectedAnimal = s.selectedAnimal;
+  if (s.selectedSession) STATE.selectedSession = s.selectedSession;
+  if (["full", "avg", "geo"].includes(s.viewMode)) STATE.viewMode = s.viewMode;
+  if (COLOR_FEATURES.includes(s.colorChoice)) STATE.colorChoice = s.colorChoice;
+  if (["group", "position"].includes(s.avgColorChoice)) STATE.avgColorChoice = s.avgColorChoice;
+  if (Array.isArray(s.mazeGroups) && s.mazeGroupsForSession) {
+    STATE.selectedMazeGroups = new Set(s.mazeGroups);
+    STATE._mazeGroupsForSession = s.mazeGroupsForSession;
+  }
+  const radio = document.querySelector(`input[name="view-mode"][value="${STATE.viewMode}"]`);
+  if (radio) radio.checked = true;
+}
+
 async function loadAndRenderSession(row) {
+  saveViewerState();
   clearMessage();
   clearPlot();
   el("sidebar-view-section").hidden = false;
@@ -220,7 +267,7 @@ function renderAveraged(session) {
   if (STATE.avgColorChoice === "position") {
     plotManifold(UMAP_1, UMAP_2, UMAP_3, position_bin, "Position (cm)", pointSize, { continuous: true });
   } else {
-    plotManifold(UMAP_1, UMAP_2, UMAP_3, Group, "Maze group", pointSize);
+    plotManifold(UMAP_1, UMAP_2, UMAP_3, Group, "Maze group", pointSize, { colorFor: groupColor, sortLegend: true });
   }
 
   const groups = sortMixed(dropNaUnique(Group));
@@ -493,14 +540,19 @@ function restrictToMazeGroups(t, laps, selectedGroups) {
 // ---- plotting, ported from manifold_plot3d's two color branches ----------
 
 // opts.continuous forces the colormap branch even for < 20 distinct values
-// (e.g. the averaged manifold's position_bin).
+// (e.g. the averaged manifold's position_bin). opts.colorFor(category) gives a
+// fixed color for a category (null -> fall back to PALETTE by first-seen
+// index); opts.sortLegend orders the categories naturally (N2N_0, N2N_1, ...).
 function plotManifold(u1, u2, u3, colorValues, colorLabel, pointSize, opts = {}) {
   const uniqueVals = dropNaUnique(colorValues);
   const categorical = !opts.continuous && uniqueVals.length < 20;
   const traces = [];
   if (categorical) {
     // categorical branch: one trace per distinct value, in first-seen order
-    const order = firstSeenOrder(colorValues);
+    let order = firstSeenOrder(colorValues);
+    if (opts.sortLegend) {
+      order = [...order].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+    }
     for (let i = 0; i < order.length; i++) {
       const cat = order[i];
       const idx = [];
@@ -511,7 +563,7 @@ function plotManifold(u1, u2, u3, colorValues, colorLabel, pointSize, opts = {})
         z: idx.map((j) => u3[j]),
         mode: "markers",
         type: "scatter3d",
-        marker: { size: pointSize ?? 5, color: PALETTE[i % PALETTE.length], line: { width: 0 } },
+        marker: { size: pointSize ?? 5, color: (opts.colorFor && opts.colorFor(cat)) || PALETTE[i % PALETTE.length], line: { width: 0 } },
         name: `${colorLabel} = ${cat}`,
       });
     }
@@ -545,7 +597,11 @@ function plotManifold(u1, u2, u3, colorValues, colorLabel, pointSize, opts = {})
 // ---- boot -------------------------------------------------------------
 
 async function init() {
-  el("reload-btn").addEventListener("click", () => location.reload());
+  el("reload-btn").addEventListener("click", () => {
+    clearSettings(); // also forget the remembered sidebar choices
+    location.reload();
+  });
+  restoreViewerState();
   document.querySelectorAll('input[name="view-mode"]').forEach((radio) => {
     radio.addEventListener("change", (e) => {
       if (e.target.checked) {
@@ -603,13 +659,11 @@ async function init() {
 
   el("animal-select").addEventListener("change", (e) => {
     STATE.selectedAnimal = e.target.value;
-    STATE.colorChoice = null;
     renderSessionSection(); // switches to the animal's first session
   });
 
   el("session-select").addEventListener("change", (e) => {
     STATE.selectedSession = e.target.value;
-    STATE.colorChoice = null; // let the new session re-derive its default
     const { filteredRows } = computeFilterChain();
     const row = filteredRows.find((r) => String(r.session) === STATE.selectedSession);
     el("session-subheader").textContent = row ? `${row.session_type} / ${row.session}` : "";
@@ -617,9 +671,9 @@ async function init() {
   });
 
   // deep link from sessions_map.html (index.html?session=<name>&session_type=<type>)
-  // -- all filters default to "everything selected" on a fresh load, so the
-  // linked session is guaranteed to show up in the dropdown as long as it's
-  // actually in session_metadata.json.
+  // -- overrides the remembered session; filters restored from localStorage
+  // that would hide it get its values added back, so the linked session is
+  // guaranteed to show up as long as it's in session_metadata.json.
   const params = new URLSearchParams(window.location.search);
   const linkedSession = params.get("session");
   if (linkedSession) {
@@ -627,7 +681,14 @@ async function init() {
     const match = STATE.metadata.find(
       (r) => String(r.session) === linkedSession && (!linkedType || String(r.session_type) === linkedType)
     );
-    if (match) STATE.selectedSession = linkedSession;
+    if (match) {
+      STATE.selectedSession = linkedSession;
+      STATE.selectedAnimal = animalOf(match);
+      for (const { col } of FILTER_COLUMNS) {
+        const sel = STATE.filterSelections[col];
+        if (sel && sel.size > 0 && col in match) sel.add(match[col]);
+      }
+    }
   }
 
   renderSessionSection();

@@ -6,6 +6,11 @@
  * animalOf/fillSelect back the animal -> session pickers of both pages: an
  * animal is chosen first and the session dropdown then lists only its
  * sessions.
+ *
+ * loadSettings/saveSettings keep each page's sidebar choices in localStorage
+ * so they survive switching between the two pages; the "Clear cache &
+ * reload" button of both pages also clears them (clearSettings).
+ * groupColor gives the averaged manifold's maze-group colors.
  */
 
 // px.colors.qualitative.Plotly, same order as the Python palette.
@@ -13,6 +18,59 @@ const PALETTE = [
   "#08519c", "#fdae6b", "#9ecae1", "#d94801", "#FFA15A",
   "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52",
 ];
+
+// Averaged-manifold group colors: one fixed color family per maze group (the
+// hue is the current maze -- blues end in F, oranges end in N; darker = same
+// maze as the previous lap, lighter = maze just switched -- the same 4 colors
+// PALETTE[0..3] used to give these groups in their sorted order). A switcher
+// session can average a group into several sub-groups (N2N_0, N2N_1, ...);
+// sub-group k gets shade k of its family, so sub-groups of one maze group
+// read as related but stay distinguishable. Shades cycle after the 4th.
+const GROUP_COLOR_FAMILIES = {
+  F2F: ["#08519c", "#3f2b96", "#1d91c0", "#08306b"],
+  N2F: ["#9ecae1", "#7fcdbb", "#bcbddc", "#5e9fd1"],
+  N2N: ["#d94801", "#8c2d04", "#e31a1c", "#b15928"],
+  F2N: ["#fdae6b", "#fec44f", "#f4a582", "#e6853f"],
+};
+
+// Color of an averaged-manifold group label ("N2N", "N2N_1", ...), or null
+// for a label that isn't <maze group>[_<k>].
+function groupColor(label) {
+  const m = /^([NF]2[NF])(?:_(\d+))?$/.exec(String(label));
+  if (!m || !GROUP_COLOR_FAMILIES[m[1]]) return null;
+  const shades = GROUP_COLOR_FAMILIES[m[1]];
+  return shades[Number(m[2] || 0) % shades.length];
+}
+
+// Per-page settings remembered across page switches (index.html <->
+// sessions_map.html) and reloads, in localStorage. Every access is wrapped:
+// storage can be unavailable (private window, blocked site data), in which
+// case the pages simply start from their defaults.
+const SETTINGS_KEYS = { viewer: "ca1view.viewer", map: "ca1view.map" };
+
+function loadSettings(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key)) || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveSettings(key, obj) {
+  try {
+    localStorage.setItem(key, JSON.stringify(obj));
+  } catch (_) {
+    // storage unavailable -- settings just aren't remembered
+  }
+}
+
+function clearSettings() {
+  try {
+    Object.values(SETTINGS_KEYS).forEach((k) => localStorage.removeItem(k));
+  } catch (_) {
+    // nothing to clear
+  }
+}
 
 const el = (id) => document.getElementById(id);
 

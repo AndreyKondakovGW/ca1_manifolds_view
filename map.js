@@ -56,6 +56,12 @@
  * comparing a feature's color distribution within one filter category
  * meaningful.
  *
+ * Sidebar choices (feature table, color feature, filter feature and its
+ * checked values, the hide-unknown-score box) are saved to localStorage on
+ * every render and restored on load (keys in common.js), so they survive
+ * switching to index.html and back. The Session picker starts on the animal /
+ * session last chosen in index.html (read from that page's saved settings).
+ *
  * el/showMessage/clearMessage/huslPalette/dropNaUnique come from common.js;
  * huslPalette in turn needs vendor/hsluv.js loaded first.
  */
@@ -97,8 +103,24 @@ const STATE = {
   hideUnknownBehaviorScore: true,
 };
 
+// localStorage settings of this page (see the module docstring)
+const SAVED = loadSettings(SETTINGS_KEYS.map);
+
+function saveMapState() {
+  saveSettings(SETTINGS_KEYS.map, {
+    table: el("table-select").value,
+    colorFeature: STATE.colorFeature,
+    filterFeature: STATE.filterFeature,
+    filterSelected: [...STATE.filterSelected],
+    hideUnknownBehaviorScore: STATE.hideUnknownBehaviorScore,
+  });
+}
+
 async function init() {
-  el("reload-btn").addEventListener("click", () => location.reload());
+  el("reload-btn").addEventListener("click", () => {
+    clearSettings(); // also forget the remembered sidebar choices
+    location.reload();
+  });
 
   let exportInfo = null;
   try {
@@ -137,8 +159,10 @@ async function loadSessionPicker() {
   el("sidebar-session-picker").hidden = false;
   el("animal-select-label").textContent = `Animal (${animals.length})`;
   const animalSelect = el("animal-select");
+  const viewer = loadSettings(SETTINGS_KEYS.viewer); // the manifold viewer's current animal / session
   fillSelect(animalSelect, animals, {
     placeholder: "— pick an animal —",
+    selected: animalCounts.has(viewer.selectedAnimal) ? viewer.selectedAnimal : null,
     labels: (a) => `${a} (${animalCounts.get(a)})`,
   });
 
@@ -154,6 +178,7 @@ async function loadSessionPicker() {
     el("session-select-label").textContent = `Session (${sessionLabels.length})`;
     fillSelect(select, sessionLabels, {
       placeholder: animalSelect.value ? "— pick a session —" : "— pick an animal first —",
+      selected: labelToRow.has(viewer.selectedSession) ? viewer.selectedSession : null,
     });
     select.disabled = !animalSelect.value;
   };
@@ -217,14 +242,18 @@ async function loadSessionMap() {
   const tableSelect = el("table-select");
   const tableNames = Object.keys(STATE.tables);
   fillSelect(tableSelect, tableNames, { labels: (t) => `${tableLabel(t)} (${STATE.tables[t].length})` });
-  const defaultTable = tableNames.find((t) => STATE.tables[t].includes(DEFAULT_COLOR_FEATURE)) || tableNames[0];
+  const defaultTable = tableNames.includes(SAVED.table) && STATE.tables[SAVED.table].includes(SAVED.colorFeature)
+    ? SAVED.table
+    : (tableNames.find((t) => STATE.tables[t].includes(DEFAULT_COLOR_FEATURE)) || tableNames[0]);
   tableSelect.value = defaultTable || "";
   tableSelect.onchange = () => {
     fillColorSelect(tableSelect.value, null);
     render();
   };
-  fillColorSelect(defaultTable, DEFAULT_COLOR_FEATURE);
+  fillColorSelect(defaultTable, defaultTable === SAVED.table ? SAVED.colorFeature : DEFAULT_COLOR_FEATURE);
 
+  if (typeof SAVED.hideUnknownBehaviorScore === "boolean") STATE.hideUnknownBehaviorScore = SAVED.hideUnknownBehaviorScore;
+  el("hide-unknown-behavior-score").checked = STATE.hideUnknownBehaviorScore;
   setupFilterSelect(featureCols);
 
   el("hide-unknown-behavior-score").addEventListener("change", (e) => {
@@ -283,6 +312,12 @@ function setupFilterSelect(featureCols) {
     const n = dropNaUnique(STATE.rows.map((r) => r[col])).length;
     return n > 0 && n < FILTER_MAX_UNIQUE;
   });
+  if (SAVED.filterFeature && filterCols.includes(SAVED.filterFeature)) {
+    STATE.filterFeature = SAVED.filterFeature;
+    // keep only values that still exist, so a stale choice can't hide every point
+    const present = new Set(STATE.rows.map((r) => filterKey(r[SAVED.filterFeature])));
+    STATE.filterSelected = new Set((SAVED.filterSelected || []).filter((k) => present.has(k)));
+  }
   const select = el("filter-select");
   select.innerHTML = "";
   const none = document.createElement("option");
@@ -349,6 +384,7 @@ function sortCategories(values) {
 }
 
 function render() {
+  saveMapState();
   const feature = STATE.colorFeature;
   const isBehaviorScore = BEHAVIOR_SCORE_COLUMNS.has(feature)
     && STATE.rows.some((r) => r[feature] === UNKNOWN_BEHAVIOR_SCORE);
