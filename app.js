@@ -20,9 +20,10 @@
  * Sidebar choices (filters, animal, session, view mode, color choices,
  * maze_group checkboxes) are saved to localStorage (saveViewerState, keys in
  * common.js) on every render and restored on load, so they survive switching
- * to sessions_map.html and back. A deep link from the map (?session=...)
- * overrides the saved session and adds its session_type / manifold_cluster
- * to the restored filters if they would hide it.
+ * to sessions_map.html and back. Filters are stored as the UNchecked values
+ * (computeFilterChain), so new / reappearing options start checked. A deep
+ * link from the map (?session=...) overrides the saved session and re-checks
+ * its session_type / manifold_cluster if the restored filters would hide it.
  *
  * Missing filter values: a session with no value in a filter column (e.g. no
  * manifold_cluster -- sessions whose lap averaging found 0 groups are never
@@ -52,7 +53,7 @@ const FILTER_COLUMNS = [
 const STATE = {
   config: null,
   metadata: [],
-  filterSelections: {}, // col -> Set of selected values (undefined = not yet initialized)
+  filterExcluded: {}, // col -> Set of UNchecked values (missing = nothing unchecked); see computeFilterChain
   selectedAnimal: null, // animalOf(row) -- the session dropdown lists only this animal's sessions
   selectedSession: null, // session name (string)
   sessionCache: new Map(), // "type/name" -> parsed session json
@@ -80,15 +81,13 @@ function computeFilterChain() {
     if (df.length === 0 || !(col in df[0])) continue; // column absent -> no-op, no widget
     const options = sortMixed(dropNaUnique(df.map((r) => r[col])));
     if (df.some((r) => isMissingValue(r[col]))) options.push(MISSING_FILTER_VALUE);
-    if (STATE.filterSelections[col] === undefined) {
-      STATE.filterSelections[col] = new Set(options);
-    } else {
-      // drop selections that vanished from the option list, keep the rest
-      STATE.filterSelections[col] = new Set(
-        [...STATE.filterSelections[col]].filter((v) => options.includes(v))
-      );
-    }
-    const selected = STATE.filterSelections[col];
+    // The state is the set of UNchecked values, not the checked ones: an option
+    // that is new (e.g. "none"), or that reappears after an upstream filter
+    // hid it for a while, starts checked instead of silently hiding its
+    // sessions. Excluded values that are not options right now are kept, so
+    // they stay unchecked when they come back.
+    const excluded = STATE.filterExcluded[col] || (STATE.filterExcluded[col] = new Set());
+    const selected = new Set(options.filter((v) => !excluded.has(v)));
     chain.push({ col, label, options, selected });
     // "if not selected: return df" -- an emptied multiselect is a no-op, not a "show nothing" filter
     if (selected.size > 0) {
@@ -116,9 +115,9 @@ function renderFilters(chain) {
       cb.type = "checkbox";
       cb.checked = selected.has(opt);
       cb.addEventListener("change", () => {
-        if (cb.checked) selected.add(opt);
-        else selected.delete(opt);
-        STATE.filterSelections[col] = selected;
+        const excluded = STATE.filterExcluded[col];
+        if (cb.checked) excluded.delete(opt);
+        else excluded.add(opt);
         renderSessionSection();
       });
       optLabel.appendChild(cb);
@@ -203,9 +202,9 @@ async function fetchSessionData(sessionType, sessionName) {
 
 function saveViewerState() {
   const filters = {};
-  for (const [col, sel] of Object.entries(STATE.filterSelections)) filters[col] = [...sel];
+  for (const [col, ex] of Object.entries(STATE.filterExcluded)) filters[col] = [...ex];
   saveSettings(SETTINGS_KEYS.viewer, {
-    filters,
+    filtersExcluded: filters, // (older saves had "filters" = checked values; ignored)
     selectedAnimal: STATE.selectedAnimal,
     selectedSession: STATE.selectedSession,
     viewMode: STATE.viewMode,
@@ -219,8 +218,8 @@ function saveViewerState() {
 function restoreViewerState() {
   const s = loadSettings(SETTINGS_KEYS.viewer);
   const cols = new Set(FILTER_COLUMNS.map((f) => f.col));
-  for (const [col, vals] of Object.entries(s.filters || {})) {
-    if (cols.has(col) && Array.isArray(vals)) STATE.filterSelections[col] = new Set(vals);
+  for (const [col, vals] of Object.entries(s.filtersExcluded || {})) {
+    if (cols.has(col) && Array.isArray(vals)) STATE.filterExcluded[col] = new Set(vals);
   }
   if (s.selectedAnimal) STATE.selectedAnimal = s.selectedAnimal;
   if (s.selectedSession) STATE.selectedSession = s.selectedSession;
@@ -716,8 +715,7 @@ async function init() {
       STATE.selectedSession = linkedSession;
       STATE.selectedAnimal = animalOf(match);
       for (const { col } of FILTER_COLUMNS) {
-        const sel = STATE.filterSelections[col];
-        if (sel && sel.size > 0) sel.add(filterValue(match[col]));
+        STATE.filterExcluded[col]?.delete(filterValue(match[col]));
       }
     }
   }

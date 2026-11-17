@@ -74,6 +74,14 @@ of the session-by-session manifold distance matrix), also writes:
         order main, averaging, decoding, behavioural. sessions_map.html picks
         a table first, then a column of it, as the color feature.
 
+Sessions without a manifold_cluster (lap averaging found 0 groups, so stage 4
+never clustered them) are exported with manifold_cluster = "chaotic"
+(MISSING_CLUSTER_LABEL, fill_missing_cluster) in session_metadata.json and
+session_map.json, so they show up under a real cluster in the viewer's
+filters. Only the export is changed, not the source CSVs.
+--session-map-only applies the same fill to the existing
+data/session_metadata.json.
+
 Settings live in export_config.yaml next to this file (manifold folder path,
 output dir, optional session allowlist, rounding) -- edit that, no code
 changes needed.
@@ -235,6 +243,20 @@ def compute_geodesic_matrix(avg_df, decimals):
 
 
 MAP_COORD_COLUMNS = ("map_cord1", "map_cord2")
+CLUSTER_COLUMN = "manifold_cluster"
+MISSING_CLUSTER_LABEL = "chaotic"
+
+
+def fill_missing_cluster(df):
+    """Copy of df with an empty manifold_cluster set to MISSING_CLUSTER_LABEL
+    (see module docstring); df unchanged if it has no such column."""
+    if CLUSTER_COLUMN not in df.columns:
+        return df
+    df = df.copy()
+    missing = df[CLUSTER_COLUMN].isna() | (df[CLUSTER_COLUMN].astype(str).str.strip() == "")
+    df[CLUSTER_COLUMN] = df[CLUSTER_COLUMN].astype(object)
+    df.loc[missing, CLUSTER_COLUMN] = MISSING_CLUSTER_LABEL
+    return df
 METADATA_TABLE_FILES = (SESSION_METADATA_FILE, AVERAGING_METADATA_FILE,
                         DECODING_METADATA_FILE, BEHAVIOURAL_METADATA_FILE)
 # bookkeeping columns not worth coloring by: the ";"-joined list of noisy lap
@@ -274,7 +296,7 @@ def export_session_map(manifold_folder, output_dir, decimals, exported_keys):
     coordinate columns are missing (and removes any stale session_map.json /
     feature_tables.json left from an earlier export, so the page shows "not
     available" instead of an outdated map)."""
-    metadata = load_all_metadata(manifold_folder)
+    metadata = fill_missing_cluster(load_all_metadata(manifold_folder))
     metadata = metadata[[c for c in metadata.columns if not _hidden_map_column(c)]]
     missing = [c for c in MAP_COORD_COLUMNS if c not in metadata.columns]
     if missing:
@@ -350,7 +372,7 @@ def main():
               f"manifold_folder in export_config.yaml.")
         sys.exit(1)
 
-    full_metadata = pd.read_csv(metadata_path)
+    full_metadata = fill_missing_cluster(pd.read_csv(metadata_path))
     metadata = full_metadata
     if session_allowlist:
         keep = metadata.apply(lambda r: f"{r['session_type']}/{r['session']}" in session_allowlist, axis=1)
@@ -362,6 +384,11 @@ def main():
         exported_path = output_dir / "session_metadata.json"
         exported = json.loads(exported_path.read_text()) if exported_path.exists() else []
         exported_keys = {(r["session_type"], r["session"]) for r in exported}
+        if exported:  # same cluster fill as a full export
+            records = [{k: _json_safe(v) for k, v in r.items()}
+                       for r in fill_missing_cluster(pd.DataFrame(exported)).to_dict(orient="records")]
+            with open(exported_path, "w") as f:
+                json.dump(records, f)
         export_session_map(manifold_folder, output_dir, decimals, exported_keys)
         return
 
